@@ -1,0 +1,8 @@
+<Project>
+  <!--
+    Workaround: The .NET Framework 4.7.2 XamlCompiler.exe from Windows App SDK
+    cannot handle Unicode (CJK) characters in file paths. When the project is in
+    such a path, builds must use a directory junction (see build.ps1) or VS MSBuild.
+    UseXamlCompilerExecutable=true is the default for 'dotnet build' (Core MSBuild).
+  -->
+</Project>
