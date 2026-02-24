@@ -6,73 +6,127 @@
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d"
-    Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
+    Background="Transparent">
 
     <Grid>
         <Grid.RowDefinitions>
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
 
-        <!-- Modern Toolbar -->
-        <CommandBar Grid.Row="0" DefaultLabelPosition="Right" IsOpen="True" IsSticky="True">
-            <AppBarButton Icon="Back" Label="Back" Click="Back_Click"/>
-            <AppBarSeparator/>
+        <!-- Toolbar -->
+        <Border Grid.Row="0"
+                Background="#80FFFFFF"
+                BorderBrush="#40E0E0E0"
+                BorderThickness="0,0,0,1"
+                Padding="8,4,8,4"
+                CornerRadius="0,0,8,8">
+            <Grid Height="40">
+                <!-- Back button -->
+                <Button x:Name="BackButton" Click="Back_Click" ToolTipService.ToolTip="Back"
+                        Style="{StaticResource ToolbarButtonStyle}"
+                        HorizontalAlignment="Left">
+                    <SymbolIcon Symbol="Back" Foreground="#333333"/>
+                </Button>
 
-            <AppBarButton Icon="OpenFile" Label="Open PDF" Click="OpenPdf_Click"/>
-            <AppBarSeparator/>
+                <!-- Tool buttons -->
+                <StackPanel Orientation="Horizontal"
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Center"
+                            Spacing="4">
 
-            <AppBarToggleButton x:Name="SelectToolButton" Icon="TouchPointer" Label="Select/Pan" Click="Tool_Click" IsChecked="True"/>
-            <AppBarToggleButton x:Name="PenToolButton" Icon="Edit" Label="Pen" Click="Tool_Click"/>
-            <AppBarToggleButton x:Name="HighlighterToolButton" Icon="Highlight" Label="Highlighter" Click="Tool_Click"/>
-            <AppBarToggleButton x:Name="EraserToolButton" Icon="Remove" Label="Eraser" Click="Tool_Click"/>
-            <AppBarToggleButton x:Name="TextToolButton" Icon="Font" Label="Text" Click="Tool_Click"/>
+                    <ToggleButton x:Name="PenToolButton" Click="PenToolButton_Click" PointerPressed="PenToolButton_PointerPressed"
+                                  ToolTipService.ToolTip="Pen"
+                                  Style="{StaticResource ToolbarToggleButtonStyle}">
+                        <StackPanel Spacing="2">
+                            <SymbolIcon x:Name="PenIcon" Symbol="Edit" Foreground="#333333"/>
+                            <Border x:Name="PenActiveIndicator" Height="2" Width="20"
+                                    Background="#0078D4" CornerRadius="1"
+                                    Visibility="Collapsed"/>
+                        </StackPanel>
+                    </ToggleButton>
 
-            <AppBarSeparator/>
-            <AppBarButton Icon="FormatPaint" Label="Color">
-                <AppBarButton.Flyout>
-                    <Flyout>
-                        <ColorPicker x:Name="ToolColorPicker" ColorChanged="ToolColorPicker_ColorChanged" IsColorSpectrumVisible="True" IsColorChannelTextInputVisible="False" IsHexInputVisible="False"/>
-                    </Flyout>
-                </AppBarButton.Flyout>
-            </AppBarButton>
+                    <ToggleButton x:Name="HighlighterToolButton" Click="HighlighterToolButton_Click" PointerPressed="HighlighterToolButton_PointerPressed"
+                                  ToolTipService.ToolTip="Highlighter"
+                                  Style="{StaticResource ToolbarToggleButtonStyle}">
+                        <StackPanel Spacing="2">
+                            <SymbolIcon x:Name="HighlighterIcon" Symbol="Highlight" Foreground="#FFD700"/>
+                            <Border x:Name="HighlighterActiveIndicator" Height="2" Width="20"
+                                    Background="#0078D4" CornerRadius="1"
+                                    Visibility="Collapsed"/>
+                        </StackPanel>
+                    </ToggleButton>
 
-            <AppBarSeparator/>
+                    <ToggleButton x:Name="EraserToolButton" Click="EraserToolButton_Click" PointerPressed="EraserToolButton_PointerPressed"
+                                  ToolTipService.ToolTip="Eraser"
+                                  Style="{StaticResource ToolbarToggleButtonStyle}">
+                        <StackPanel Spacing="2">
+                            <FontIcon x:Name="EraserIcon" Glyph="&#xE75C;" FontSize="16" Foreground="#333333"/>
+                            <Border x:Name="EraserActiveIndicator" Height="2" Width="20"
+                                    Background="#0078D4" CornerRadius="1"
+                                    Visibility="Collapsed"/>
+                        </StackPanel>
+                    </ToggleButton>
 
-            <AppBarElementContainer>
-                <ComboBox x:Name="FontSizeComboBox" SelectionChanged="FontSizeComboBox_SelectionChanged" Width="80" VerticalAlignment="Center" SelectedIndex="1">
-                    <ComboBoxItem Content="12"/>
-                    <ComboBoxItem Content="18"/>
-                    <ComboBoxItem Content="24"/>
-                    <ComboBoxItem Content="36"/>
-                    <ComboBoxItem Content="48"/>
-                    <ComboBoxItem Content="72"/>
-                </ComboBox>
-            </AppBarElementContainer>
+                    <ToggleButton x:Name="TextToolButton" Click="TextToolButton_Click"
+                                  ToolTipService.ToolTip="Text"
+                                  Style="{StaticResource ToolbarToggleButtonStyle}">
+                        <StackPanel Spacing="2">
+                            <FontIcon Glyph="&#xE8D2;" FontSize="16" Foreground="#333333"/>
+                            <Border x:Name="TextActiveIndicator" Height="2" Width="20"
+                                    Background="#0078D4" CornerRadius="1"
+                                    Visibility="Collapsed"/>
+                        </StackPanel>
+                    </ToggleButton>
 
-            <AppBarSeparator/>
-            <AppBarButton Icon="Save" Label="Save PDF" Click="SavePdf_Click"/>
-        </CommandBar>
+                    <AppBarSeparator/>
 
-        <!-- PDF Viewer & Canvas -->
-        <ScrollViewer Grid.Row="1" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto" ZoomMode="Enabled" MinZoomFactor="0.5" MaxZoomFactor="5.0">
-            <StackPanel x:Name="PagesContainer" Orientation="Vertical" HorizontalAlignment="Center" Margin="20"/>
+                    <Button Click="SavePdf_Click" ToolTipService.ToolTip="Save"
+                            Style="{StaticResource ToolbarButtonStyle}">
+                        <SymbolIcon Symbol="Save" Foreground="#333333"/>
+                    </Button>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <ScrollViewer Grid.Row="1"
+                      HorizontalScrollBarVisibility="Auto"
+                      VerticalScrollBarVisibility="Auto"
+                      ZoomMode="Enabled"
+                      MinZoomFactor="0.5" MaxZoomFactor="5.0">
+            <StackPanel x:Name="PagesContainer"
+                        Orientation="Vertical"
+                        HorizontalAlignment="Center"
+                        Margin="20"/>
         </ScrollViewer>
 
-        <Grid x:Name="LoadingOverlay" Grid.RowSpan="2" Background="#80000000" Visibility="Collapsed" Opacity="0" IsHitTestVisible="False">
+        <Grid x:Name="LoadingOverlay" Grid.RowSpan="2"
+              Background="#80000000" Visibility="Collapsed"
+              Opacity="0" IsHitTestVisible="False">
             <Grid.Resources>
                 <Storyboard x:Name="LoadingOverlayFadeIn">
-                    <DoubleAnimation Storyboard.TargetName="LoadingOverlay" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.2" EnableDependentAnimation="True"/>
+                    <DoubleAnimation Storyboard.TargetName="LoadingOverlay"
+                                     Storyboard.TargetProperty="Opacity"
+                                     To="1" Duration="0:0:0.2"
+                                     EnableDependentAnimation="True"/>
                 </Storyboard>
                 <Storyboard x:Name="LoadingOverlayFadeOut">
-                    <DoubleAnimation Storyboard.TargetName="LoadingOverlay" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.25" EnableDependentAnimation="True"/>
+                    <DoubleAnimation Storyboard.TargetName="LoadingOverlay"
+                                     Storyboard.TargetProperty="Opacity"
+                                     To="0" Duration="0:0:0.25"
+                                     EnableDependentAnimation="True"/>
                 </Storyboard>
             </Grid.Resources>
 
-            <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" CornerRadius="12" Padding="20" HorizontalAlignment="Center" VerticalAlignment="Center">
-                <StackPanel Spacing="12" HorizontalAlignment="Center" VerticalAlignment="Center">
-                    <ProgressRing x:Name="LoadingOverlayRing" IsActive="False" Width="48" Height="48"/>
-                    <TextBlock Text="Loading Document…" FontSize="16" HorizontalAlignment="Center"/>
+            <Border Background="#E0FFFFFF"
+                    CornerRadius="12" Padding="20"
+                    HorizontalAlignment="Center" VerticalAlignment="Center">
+                <StackPanel Spacing="12" HorizontalAlignment="Center"
+                            VerticalAlignment="Center">
+                    <ProgressRing x:Name="LoadingOverlayRing"
+                                  IsActive="False" Width="48" Height="48"/>
+                    <TextBlock Text="Loading Document..." FontSize="16"
+                               HorizontalAlignment="Center"/>
                 </StackPanel>
             </Border>
         </Grid>

@@ -10,7 +10,7 @@ namespace WindowsNotesApp
         public MainWindow()
         {
             this.InitializeComponent();
-            SystemBackdrop = new MicaBackdrop();
+            SystemBackdrop = new DesktopAcrylicBackdrop();
             RootFrame.Navigate(typeof(HomePage));
         }
     }

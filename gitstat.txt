@@ -1,0 +1,41 @@
+﻿On branch main
+Your branch is up to date with 'origin/main'.
+
+Changes to be committed:
+  (use "git restore --staged <file>..." to unstage)
+	modified:   App.xaml
+	modified:   Controls/PdfPageControl.xaml
+	modified:   Controls/PdfPageControl.xaml.cs
+	modified:   MainWindow.xaml.cs
+	new file:   "Microsoft Visual Studio\357\200\242 -Recurse -Filter \357\200\242MSBuild.exe\357\200\242 -ErrorAction SilentlyContinue \357\201\274 Select-Object -First 3 -ExpandProperty FullName 2\357\200\276&1'"
+	new file:   Models/AnnotationModels.cs
+	modified:   Pages/EditorPage.xaml
+	modified:   Pages/EditorPage.xaml.cs
+	new file:   Pages/EditorPage.xaml.cs.bak
+	modified:   Services/PdfService.cs
+	new file:   Services/RecentFilesService.cs
+	new file:   app_error.txt
+	new file:   app_output.txt
+	new file:   build_full.txt
+	new file:   build_log2.txt
+	new file:   build_log3.txt
+	new file:   "e -Force obj, bin -ErrorAction SilentlyContinue ; dotnet build 2\357\200\276&1'"
+
+Changes not staged for commit:
+  (use "git add <file>..." to update what will be committed)
+  (use "git restore <file>..." to discard changes in working directory)
+	modified:   Controls/PdfPageControl.xaml
+	modified:   Services/HuaweiPenService.cs
+
+Untracked files:
+  (use "git add <file>..." to include in what will be committed)
+	build.txt
+	build2.txt
+	build_normal.txt
+	build_output.txt
+	csdiff.txt
+	git_diff.txt
+	git_diff_utf8.txt
+	gitstat.txt
+	homediff.txt
+

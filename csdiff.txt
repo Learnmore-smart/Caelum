@@ -1,0 +1,214 @@
+﻿diff --git a/Pages/HomePage.xaml.cs b/Pages/HomePage.xaml.cs
+index ce02f85..603ab93 100644
+--- a/Pages/HomePage.xaml.cs
++++ b/Pages/HomePage.xaml.cs
+@@ -8,6 +8,7 @@ using System.Threading.Tasks;
+ using Windows.Storage;
+ using Windows.Storage.Pickers;
+ using WinRT.Interop;
++using Microsoft.UI.Xaml.Input;
+ 
+ namespace WindowsNotesApp.Pages
+ {
+@@ -240,15 +241,20 @@ namespace WindowsNotesApp.Pages
+                 return;
+             }
+ 
++            if (!System.IO.File.Exists(tile.Path))
++            {
++                await RemoveMissingRecentTileAsync(tile);
++                await ShowDialogAsync("Error", "File not found.");
++                return;
++            }
++
+             try
+             {
+-                var file = await StorageFile.GetFileFromPathAsync(tile.Path);
+-                Frame.Navigate(typeof(EditorPage), file);
++                Frame.Navigate(typeof(EditorPage), tile.Path);
+             }
+-            catch (Exception)
++            catch (Exception ex)
+             {
+-                await RemoveMissingRecentTileAsync(tile);
+-                await ShowDialogAsync("Error", "File not found or access denied.");
++                await ShowDialogAsync("Error", $"Failed to open file:\n{ex.Message}\n\nPath: {tile.Path}");
+             }
+         }
+ 
+@@ -277,6 +283,175 @@ namespace WindowsNotesApp.Pages
+             };
+             await dialog.ShowAsync();
+         }
++
++        private async void RemoveRecent_Click(object sender, RoutedEventArgs e)
++        {
++            if (sender is FrameworkElement element && element.DataContext is HomeTile tile)
++            {
++                await RemoveMissingRecentTileAsync(tile);
++            }
++        }
++
++        private async void OpenLocation_Click(object sender, RoutedEventArgs e)
++        {
++            if (sender is FrameworkElement element && element.DataContext is HomeTile tile && !string.IsNullOrWhiteSpace(tile.Path))
++            {
++                if (System.IO.File.Exists(tile.Path))
++                {
++                    System.Diagnostics.Process.Start("explorer.exe", $"/select,\"{tile.Path}\"");
++                }
++                else
++                {
++                    await ShowDialogAsync("Error", "File not found.");
++                    await RemoveMissingRecentTileAsync(tile);
++                }
++            }
++        }
++
++        private async void DuplicateFile_Click(object sender, RoutedEventArgs e)
++        {
++            if (sender is FrameworkElement element && element.DataContext is HomeTile tile && !string.IsNullOrWhiteSpace(tile.Path))
++            {
++                if (!System.IO.File.Exists(tile.Path))
++                {
++                    await ShowDialogAsync("Error", "File not found.");
++                    await RemoveMissingRecentTileAsync(tile);
++                    return;
++                }
++
++                try
++                {
++                    string directory = System.IO.Path.GetDirectoryName(tile.Path);
++                    string fileNameWithoutExtension = System.IO.Path.GetFileNameWithoutExtension(tile.Path);
++                    string extension = System.IO.Path.GetExtension(tile.Path);
++                    string newPath = System.IO.Path.Combine(directory, $"{fileNameWithoutExtension} - Copy{extension}");
++                    int count = 1;
++                    while (System.IO.File.Exists(newPath))
++                    {
++                        count++;
++                        newPath = System.IO.Path.Combine(directory, $"{fileNameWithoutExtension} - Copy ({count}){extension}");
++                    }
++
++                    System.IO.File.Copy(tile.Path, newPath);
++                    await AddToRecentFilesAsync(newPath);
++                }
++                catch (Exception ex)
++                {
++                    await ShowDialogAsync("Error", $"Failed to duplicate file:\n{ex.Message}");
++                }
++            }
++        }
++
++        private async void RenameFile_Click(object sender, RoutedEventArgs e)
++        {
++            if (sender is FrameworkElement element && element.DataContext is HomeTile tile && !string.IsNullOrWhiteSpace(tile.Path))
++            {
++                if (!System.IO.File.Exists(tile.Path))
++                {
++                    await ShowDialogAsync("Error", "File not found.");
++                    await RemoveMissingRecentTileAsync(tile);
++                    return;
++                }
++
++                TextBox inputTextBox = new TextBox
++                {
++                    Text = System.IO.Path.GetFileNameWithoutExtension(tile.Path),
++                    AcceptsReturn = false
++                };
++                inputTextBox.Loaded += (s, ev) => inputTextBox.SelectAll();
++
++                ContentDialog renameDialog = new ContentDialog
++                {
++                    Title = "Rename file",
++                    Content = inputTextBox,
++                    PrimaryButtonText = "Rename",
++                    CloseButtonText = "Cancel",
++                    DefaultButton = ContentDialogButton.Primary,
++                    XamlRoot = this.XamlRoot
++                };
++
++                var result = await renameDialog.ShowAsync();
++                if (result == ContentDialogResult.Primary)
++                {
++                    string newName = inputTextBox.Text.Trim();
++                    if (string.IsNullOrWhiteSpace(newName))
++                    {
++                        return;
++                    }
++
++                    if (newName.IndexOfAny(System.IO.Path.GetInvalidFileNameChars()) >= 0)
++                    {
++                        await ShowDialogAsync("Error", "Invalid file name (cannot contain characters like / \\ : * ? \" < > |).");
++                        return;
++                    }
++
++                    string newPath = System.IO.Path.Combine(System.IO.Path.GetDirectoryName(tile.Path), newName + System.IO.Path.GetExtension(tile.Path));
++
++                    if (string.Equals(newPath, tile.Path, StringComparison.OrdinalIgnoreCase))
++                    {
++                        return;
++                    }
++
++                    if (System.IO.File.Exists(newPath))
++                    {
++                        await ShowDialogAsync("Error", "A file with that name already exists.");
++                        return;
++                    }
++
++                    try
++                    {
++                        System.IO.File.Move(tile.Path, newPath);
++
++                        // Replace the tile in collection
++                        int index = HomeTiles.IndexOf(tile);
++                        if (index >= 0)
++                        {
++                            HomeTiles[index] = HomeTile.CreateFileTile(newPath);
++                            await SaveRecentFilesAsync();
++                        }
++                    }
++                    catch (Exception ex)
++                    {
++                        await ShowDialogAsync("Error", $"Failed to rename file:\n{ex.Message}");
++                    }
++                }
++            }
++        }
++
++        private void Tile_PointerEntered(object sender, PointerRoutedEventArgs e)
++        {
++            if (sender is UIElement element)
++            {
++                var visual = Microsoft.UI.Xaml.Hosting.ElementCompositionPreview.GetElementVisual(element);
++                visual.CenterPoint = new System.Numerics.Vector3((float)element.RenderSize.Width / 2, (float)element.RenderSize.Height / 2, 0f);
++
++                var compositor = visual.Compositor;
++                var animation = compositor.CreateVector3KeyFrameAnimation();
++                animation.InsertKeyFrame(1.0f, new System.Numerics.Vector3(1.03f, 1.03f, 1.0f));
++                animation.Duration = TimeSpan.FromMilliseconds(200);
++                visual.StartAnimation("Scale", animation);
++            }
++        }
++
++        private void Tile_PointerExited(object sender, PointerRoutedEventArgs e)
++        {
++            if (sender is UIElement element)
++            {
++                var visual = Microsoft.UI.Xaml.Hosting.ElementCompositionPreview.GetElementVisual(element);
++                visual.CenterPoint = new System.Numerics.Vector3((float)element.RenderSize.Width / 2, (float)element.RenderSize.Height / 2, 0f);
++
++                var compositor = visual.Compositor;
++                var animation = compositor.CreateVector3KeyFrameAnimation();
++                animation.InsertKeyFrame(1.0f, new System.Numerics.Vector3(1.0f, 1.0f, 1.0f));
++                animation.Duration = TimeSpan.FromMilliseconds(200);
++                visual.StartAnimation("Scale", animation);
++            }
++        }
++
++        private async void ToolbarButton_Click(object sender, RoutedEventArgs e)
++        {
++            await ShowDialogAsync("Coming soon", "This feature is not fully implemented yet.");
++        }
+     }
+ 
+     public sealed class HomeTile
