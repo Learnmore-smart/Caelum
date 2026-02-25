@@ -1,13 +1,11 @@
-using Microsoft.UI.Xaml;
-using Microsoft.UI.Xaml.Controls;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Threading;
 using System.Threading.Tasks;
-using Windows.Storage;
-using Windows.Storage.Pickers;
-using WinRT.Interop;
+using System.Windows;
+using System.Windows.Controls;
+using Microsoft.Win32;
 
 namespace WindowsNotesApp.Pages
 {
@@ -21,6 +19,7 @@ namespace WindowsNotesApp.Pages
         public HomePage()
         {
             this.InitializeComponent();
+            this.DataContext = this;
             HomeTiles.Add(HomeTile.CreateAddTile());
             Loaded += HomePage_Loaded;
         }
@@ -158,46 +157,37 @@ namespace WindowsNotesApp.Pages
             }
         }
 
-        private async void TilesGrid_ItemClick(object sender, ItemClickEventArgs e)
+        private void TilesGrid_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
-            if (e.ClickedItem is not HomeTile tile)
-            {
-                return;
-            }
+        }
 
-            if (tile.IsAddTile)
-            {
-                await PickAndOpenPdfAsync();
-                return;
-            }
+        private void AddTile_Click(object sender, RoutedEventArgs e)
+        {
+            _ = PickAndOpenPdfAsync();
+        }
 
-            await OpenRecentTileAsync(tile);
+        private void FileTile_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is Button button && button.Tag is HomeTile tile)
+            {
+                _ = OpenRecentTileAsync(tile);
+            }
         }
 
         private async Task PickAndOpenPdfAsync()
         {
-            var picker = new FileOpenPicker();
-            picker.ViewMode = PickerViewMode.Thumbnail;
-            picker.SuggestedStartLocation = PickerLocationId.DocumentsLibrary;
-            picker.FileTypeFilter.Add(".pdf");
-
-            var window = (Application.Current as App)?.m_window;
-            if (window == null)
+            var picker = new OpenFileDialog
             {
-                return;
-            }
+                Filter = "PDF Files (*.pdf)|*.pdf",
+                Title = "Open PDF File"
+            };
 
-            var hwnd = WindowNative.GetWindowHandle(window);
-            InitializeWithWindow.Initialize(picker, hwnd);
-
-            var file = await picker.PickSingleFileAsync();
-            if (file == null)
+            if (picker.ShowDialog() == true)
             {
-                return;
+                var filePath = picker.FileName;
+                await AddToRecentFilesAsync(filePath);
+                NavigationService?.Navigate(new EditorPage(filePath));
             }
-
-            await AddToRecentFilesAsync(file.Path);
-            Frame.Navigate(typeof(EditorPage), file);
         }
 
         private async Task AddToRecentFilesAsync(string path)
@@ -242,8 +232,13 @@ namespace WindowsNotesApp.Pages
 
             try
             {
-                var file = await StorageFile.GetFileFromPathAsync(tile.Path);
-                Frame.Navigate(typeof(EditorPage), file);
+                if (!System.IO.File.Exists(tile.Path))
+                {
+                    await RemoveMissingRecentTileAsync(tile);
+                    await ShowDialogAsync("Error", "File not found.");
+                    return;
+                }
+                NavigationService?.Navigate(new EditorPage(tile.Path));
             }
             catch (Exception)
             {
@@ -268,14 +263,49 @@ namespace WindowsNotesApp.Pages
 
         private async Task ShowDialogAsync(string title, string content)
         {
-            var dialog = new ContentDialog
+            var window = Window.GetWindow(this);
+            if (window != null)
             {
-                Title = title,
-                Content = content,
-                CloseButtonText = "OK",
-                XamlRoot = this.XamlRoot
-            };
-            await dialog.ShowAsync();
+                var dialog = new Window
+                {
+                    Title = title,
+                    Width = 300,
+                    Height = 150,
+                    WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                    Owner = window,
+                    ResizeMode = ResizeMode.NoResize
+                };
+
+                var grid = new Grid();
+                grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+                grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+                var textBlock = new TextBlock
+                {
+                    Text = content,
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    VerticalAlignment = VerticalAlignment.Center,
+                    TextWrapping = TextWrapping.Wrap,
+                    Margin = new Thickness(20)
+                };
+                Grid.SetRow(textBlock, 0);
+                grid.Children.Add(textBlock);
+
+                var button = new Button
+                {
+                    Content = "OK",
+                    Width = 80,
+                    Height = 28,
+                    Margin = new Thickness(0, 0, 0, 15)
+                };
+                button.Click += (s, e) => dialog.Close();
+                Grid.SetRow(button, 1);
+                grid.Children.Add(button);
+
+                dialog.Content = grid;
+                dialog.ShowDialog();
+            }
+            await Task.CompletedTask;
         }
     }
 

@@ -1,14 +1,13 @@
 using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
-using Microsoft.UI.Xaml;
-using WinRT.Interop;
+using System.Windows;
+using System.Windows.Interop;
 
 namespace WindowsNotesApp.Services
 {
     public class HuaweiPenService
     {
-        // Events
         public event EventHandler ToolToggleRequested;
 
         private IntPtr _hwnd;
@@ -78,7 +77,8 @@ namespace WindowsNotesApp.Services
 
         public void Initialize(Window window)
         {
-            _hwnd = WindowNative.GetWindowHandle(window);
+            var helper = new WindowInteropHelper(window);
+            _hwnd = helper.EnsureHandle();
 
             // Register for Raw Input (Digitizer)
             var rid = new RAWINPUTDEVICE[1];

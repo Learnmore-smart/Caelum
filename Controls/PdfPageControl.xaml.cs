@@ -1,18 +1,13 @@
-using Microsoft.UI;
-using Microsoft.UI.Xaml;
-using Microsoft.UI.Xaml.Controls;
-using Microsoft.UI.Xaml.Input;
-using Microsoft.UI.Xaml.Media;
-using Microsoft.UI.Xaml.Media.Imaging;
-using Microsoft.UI.Xaml.Shapes;
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Numerics;
-using System.Runtime.InteropServices;
-using Windows.Foundation;
-using Windows.UI;
-using Windows.UI.Input.Inking;
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Input;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
+using System.Windows.Media.Imaging;
+using System.Windows.Ink;
 using WindowsNotesApp.Models;
 
 namespace WindowsNotesApp.Controls
@@ -34,68 +29,215 @@ namespace WindowsNotesApp.Controls
 
         public Canvas TextOverlay => TextOverlayCanvas;
 
-        public event EventHandler<PointerRoutedEventArgs> TextOverlayPointerPressed;
-        public event EventHandler<PointerRoutedEventArgs> BackgroundPointerPressed;
+        public event EventHandler<MouseButtonEventArgs> TextOverlayPointerPressed;
+        public event EventHandler<MouseButtonEventArgs> BackgroundPointerPressed;
         public event EventHandler InkMutated;
 
-        // Ink state
-        private InkDrawingAttributes _drawingAttributes;
+        private DrawingAttributes _drawingAttributes;
+        private CustomInkInputProcessingMode _currentMode = CustomInkInputProcessingMode.None;
+        private double _eraserSize = 20;
+        private bool _isErasing;
+        private Stroke _strokeBeingErased;
+        private StylusPointCollection _erasePoints;
 
         public PdfPageControl()
         {
-            this.InitializeComponent();
+            InitializeComponent();
 
-            // Default attributes
-            _drawingAttributes = new InkDrawingAttributes
+            _drawingAttributes = new DrawingAttributes
             {
                 Color = Colors.Black,
-                Size = new Size(2, 2),
-                FitToCurve = true
+                Width = 2,
+                Height = 2,
+                FitToCurve = true,
+                StylusTip = StylusTip.Ellipse
             };
 
-            // By default, text overlay allows hit test only if explicitly enabled
-            TextOverlayCanvas.IsHitTestVisible = false;
+            InkCanvas.DefaultDrawingAttributes = _drawingAttributes;
+            InkCanvas.EditingMode = InkCanvasEditingMode.None;
+            InkCanvas.StrokeCollected += InkCanvas_StrokeCollected;
+            InkCanvas.StrokeErasing += InkCanvas_StrokeErasing;
+            InkCanvas.StrokeErased += InkCanvas_StrokeErased;
 
-            InkCanvas.InkPresenter.InputDeviceTypes = Microsoft.UI.Input.CoreInputDeviceTypes.Pen |
-                                                      Microsoft.UI.Input.CoreInputDeviceTypes.Mouse |
-                                                      Microsoft.UI.Input.CoreInputDeviceTypes.Touch;
-            InkCanvas.InkPresenter.StrokesCollected += InkPresenter_StrokesCollected;
-            InkCanvas.InkPresenter.StrokesErased += InkPresenter_StrokesErased;
+            TextOverlayCanvas.IsHitTestVisible = false;
+            InkCanvas.IsHitTestVisible = true;
 
             Loaded += PdfPageControl_Loaded;
             Unloaded += PdfPageControl_Unloaded;
         }
 
-        private void InkPresenter_StrokesCollected(InkPresenter sender, InkStrokesCollectedEventArgs args)
+        private void InkCanvas_StrokeCollected(object sender, InkCanvasStrokeCollectedEventArgs e)
         {
             InkMutated?.Invoke(this, EventArgs.Empty);
         }
 
-        private void InkPresenter_StrokesErased(InkPresenter sender, InkStrokesErasedEventArgs args)
+        private void InkCanvas_StrokeErasing(object sender, InkCanvasStrokeErasingEventArgs e)
+        {
+            InkMutated?.Invoke(this, EventArgs.Empty);
+        }
+
+        private void InkCanvas_StrokeErased(object sender, RoutedEventArgs e)
         {
             InkMutated?.Invoke(this, EventArgs.Empty);
         }
 
         private void PdfPageControl_Loaded(object sender, RoutedEventArgs e)
         {
-            TextOverlayCanvas.PointerPressed += TextOverlayCanvas_PointerPressed;
-            InkCanvas.PointerPressed += InkCanvas_PointerPressed;
+            TextOverlayCanvas.MouseDown += TextOverlayCanvas_MouseDown;
+            InkCanvas.MouseDown += InkCanvas_MouseDown;
+            InkCanvas.MouseMove += InkCanvas_MouseMove;
+            InkCanvas.MouseUp += InkCanvas_MouseUp;
+            InkCanvas.StylusDown += InkCanvas_StylusDown;
+            InkCanvas.StylusMove += InkCanvas_StylusMove;
+            InkCanvas.StylusUp += InkCanvas_StylusUp;
         }
 
         private void PdfPageControl_Unloaded(object sender, RoutedEventArgs e)
         {
-            TextOverlayCanvas.PointerPressed -= TextOverlayCanvas_PointerPressed;
-            InkCanvas.PointerPressed -= InkCanvas_PointerPressed;
+            TextOverlayCanvas.MouseDown -= TextOverlayCanvas_MouseDown;
+            InkCanvas.MouseDown -= InkCanvas_MouseDown;
+            InkCanvas.MouseMove -= InkCanvas_MouseMove;
+            InkCanvas.MouseUp -= InkCanvas_MouseUp;
+            InkCanvas.StylusDown -= InkCanvas_StylusDown;
+            InkCanvas.StylusMove -= InkCanvas_StylusMove;
+            InkCanvas.StylusUp -= InkCanvas_StylusUp;
         }
 
-        private void TextOverlayCanvas_PointerPressed(object sender, PointerRoutedEventArgs e)
+        private void TextOverlayCanvas_MouseDown(object sender, MouseButtonEventArgs e)
         {
             TextOverlayPointerPressed?.Invoke(this, e);
         }
 
-        private void InkCanvas_PointerPressed(object sender, PointerRoutedEventArgs e)
+        private void InkCanvas_MouseDown(object sender, MouseButtonEventArgs e)
         {
-            BackgroundPointerPressed?.Invoke(this, e);
+            if (_currentMode == CustomInkInputProcessingMode.None)
+            {
+                BackgroundPointerPressed?.Invoke(this, e);
+            }
+        }
+
+        private void InkCanvas_StylusDown(object sender, StylusDownEventArgs e)
+        {
+            if (_currentMode == CustomInkInputProcessingMode.Erasing)
+            {
+                _isErasing = true;
+                _erasePoints = e.GetStylusPoints(InkCanvas);
+                EraseStrokesAtPoints(_erasePoints);
+            }
+        }
+
+        private void InkCanvas_StylusMove(object sender, StylusEventArgs e)
+        {
+            if (_isErasing && _currentMode == CustomInkInputProcessingMode.Erasing)
+            {
+                var newPoints = e.GetStylusPoints(InkCanvas);
+                EraseStrokesAtPoints(newPoints);
+            }
+        }
+
+        private void InkCanvas_StylusUp(object sender, StylusEventArgs e)
+        {
+            if (_isErasing)
+            {
+                _isErasing = false;
+                _erasePoints = null;
+            }
+        }
+
+        private void InkCanvas_MouseMove(object sender, MouseEventArgs e)
+        {
+            if (_currentMode == CustomInkInputProcessingMode.Erasing && e.LeftButton == MouseButtonState.Pressed)
+            {
+                var point = e.GetPosition(InkCanvas);
+                EraseStrokesAtPoint(point);
+            }
+        }
+
+        private void InkCanvas_MouseUp(object sender, MouseButtonEventArgs e)
+        {
+            _isErasing = false;
+        }
+
+        private void EraseStrokesAtPoints(StylusPointCollection points)
+        {
+            if (points == null) return;
+            foreach (var pt in points)
+            {
+                EraseStrokesAtPoint(new Point(pt.X, pt.Y));
+            }
+        }
+
+        private void EraseStrokesAtPoint(Point point)
+        {
+            var eraserRect = new Rect(
+                point.X - _eraserSize / 2,
+                point.Y - _eraserSize / 2,
+                _eraserSize,
+                _eraserSize);
+
+            var strokesToErase = new List<Stroke>();
+            foreach (Stroke stroke in InkCanvas.Strokes)
+            {
+                foreach (StylusPoint sp in stroke.StylusPoints)
+                {
+                    if (eraserRect.Contains(new Point(sp.X, sp.Y)))
+                    {
+                        strokesToErase.Add(stroke);
+                        break;
+                    }
+                }
+            }
+            if (strokesToErase.Count > 0)
+            {
+                foreach (var stroke in strokesToErase)
+                {
+                    var clippedStrokes = ClipStrokeByEraser(stroke, eraserRect);
+                    InkCanvas.Strokes.Remove(stroke);
+                    foreach (var newStroke in clippedStrokes)
+                    {
+                        InkCanvas.Strokes.Add(newStroke);
+                    }
+                }
+                InkMutated?.Invoke(this, EventArgs.Empty);
+            }
+        }
+
+        private List<Stroke> ClipStrokeByEraser(Stroke stroke, Rect eraserRect)
+        {
+            var result = new List<Stroke>();
+            var stylusPoints = stroke.StylusPoints;
+            var currentSegment = new StylusPointCollection();
+
+            for (int i = 0; i < stylusPoints.Count; i++)
+            {
+                var pt = stylusPoints[i];
+                var point = new Point(pt.X, pt.Y);
+                bool inEraser = eraserRect.Contains(point);
+
+                if (!inEraser)
+                {
+                    currentSegment.Add(pt);
+                }
+                else
+                {
+                    if (currentSegment.Count > 1)
+                    {
+                        var newStroke = new Stroke(currentSegment.Clone());
+                        newStroke.DrawingAttributes = stroke.DrawingAttributes.Clone();
+                        result.Add(newStroke);
+                    }
+                    currentSegment.Clear();
+                }
+            }
+
+            if (currentSegment.Count > 1)
+            {
+                var newStroke = new Stroke(currentSegment.Clone());
+                newStroke.DrawingAttributes = stroke.DrawingAttributes.Clone();
+                result.Add(newStroke);
+            }
+
+            return result;
         }
 
         private static void OnPageSourceChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
@@ -110,78 +252,70 @@ namespace WindowsNotesApp.Controls
             InkCanvas.IsHitTestVisible = !isTextMode;
         }
 
-        public InkDrawingAttributes CopyDefaultDrawingAttributes()
+        public DrawingAttributes CopyDefaultDrawingAttributes()
         {
-            // Return a copy
-            return new InkDrawingAttributes
-            {
-                Color = _drawingAttributes.Color,
-                Size = _drawingAttributes.Size,
-                FitToCurve = _drawingAttributes.FitToCurve,
-                DrawAsHighlighter = _drawingAttributes.DrawAsHighlighter,
-                PenTip = _drawingAttributes.PenTip,
-                IgnorePressure = _drawingAttributes.IgnorePressure,
-                PenTipTransform = _drawingAttributes.PenTipTransform
-            };
+            return _drawingAttributes.Clone();
         }
 
-        public void SetInkAttributes(InkDrawingAttributes attributes)
+        public void SetInkAttributes(DrawingAttributes attributes)
         {
-            _drawingAttributes = attributes;
+            _drawingAttributes = attributes.Clone();
             _drawingAttributes.FitToCurve = true;
-            InkCanvas.InkPresenter.UpdateDefaultDrawingAttributes(_drawingAttributes);
+            InkCanvas.DefaultDrawingAttributes = _drawingAttributes;
         }
 
         public void SetInputMode(CustomInkInputProcessingMode mode)
         {
+            _currentMode = mode;
             switch (mode)
             {
                 case CustomInkInputProcessingMode.Inking:
-                    InkCanvas.InkPresenter.InputProcessingConfiguration.Mode = InkInputProcessingMode.Inking;
-                    InkCanvas.InkPresenter.InputProcessingConfiguration.RightDragAction = InkInputRightDragAction.LeaveUnmodified;
+                    InkCanvas.EditingMode = InkCanvasEditingMode.Ink;
                     break;
                 case CustomInkInputProcessingMode.Erasing:
-                    InkCanvas.InkPresenter.InputProcessingConfiguration.Mode = InkInputProcessingMode.Erasing;
-                    InkCanvas.InkPresenter.InputProcessingConfiguration.RightDragAction = InkInputRightDragAction.LeaveUnmodified;
+                    InkCanvas.EditingMode = InkCanvasEditingMode.None;
                     break;
                 case CustomInkInputProcessingMode.None:
-                    InkCanvas.InkPresenter.InputProcessingConfiguration.Mode = InkInputProcessingMode.None;
-                    InkCanvas.InkPresenter.InputProcessingConfiguration.RightDragAction = InkInputRightDragAction.LeaveUnmodified;
+                    InkCanvas.EditingMode = InkCanvasEditingMode.None;
                     break;
             }
         }
 
         public void SetEraserSize(double size)
         {
-            // Native InkCanvas handles eraser size automatically with the stylus tail or system defaults.
+            _eraserSize = size;
         }
 
-        public IEnumerable<InkStroke> GetStrokes()
+        public StrokeCollection GetStrokes()
         {
-            return InkCanvas.InkPresenter.StrokeContainer.GetStrokes();
+            return InkCanvas.Strokes;
         }
 
         public void ClearInk()
         {
-            InkCanvas.InkPresenter.StrokeContainer.Clear();
+            InkCanvas.Strokes.Clear();
             InkMutated?.Invoke(this, EventArgs.Empty);
         }
 
         public List<StrokeAnnotation> GetStrokeData()
         {
             var list = new List<StrokeAnnotation>();
-            foreach (var stroke in InkCanvas.InkPresenter.StrokeContainer.GetStrokes())
+            foreach (var stroke in InkCanvas.Strokes)
             {
                 var attrs = stroke.DrawingAttributes;
                 var color = attrs.Color;
                 var sa = new StrokeAnnotation
                 {
-                    R = color.R, G = color.G, B = color.B, A = color.A,
-                    Size = attrs.Size.Width, IsHighlighter = attrs.DrawAsHighlighter
+                    R = color.R,
+                    G = color.G,
+                    B = color.B,
+                    A = color.A,
+                    Size = attrs.Width,
+                    IsHighlighter = attrs.IsHighlighter
                 };
-                foreach (var pt in stroke.GetInkPoints())
+                foreach (var pt in stroke.StylusPoints)
                 {
-                    sa.Points.Add(new[] { pt.Position.X, pt.Position.Y });
+                    sa.Points.Add(new[] { pt.X, pt.Y });
                 }
                 list.Add(sa);
             }
@@ -193,39 +327,38 @@ namespace WindowsNotesApp.Controls
             if (sa.Points == null || sa.Points.Count == 0) return;
 
             var color = Color.FromArgb(sa.A, sa.R, sa.G, sa.B);
-            var attrs = new InkDrawingAttributes
+            var attrs = new DrawingAttributes
             {
                 Color = color,
-                Size = new Size(sa.Size > 0 ? sa.Size : 2.0, sa.Size > 0 ? sa.Size : 2.0),
-                DrawAsHighlighter = sa.IsHighlighter,
+                Width = sa.Size > 0 ? sa.Size : 2.0,
+                Height = sa.Size > 0 ? sa.Size : 2.0,
+                IsHighlighter = sa.IsHighlighter,
                 FitToCurve = true
             };
 
-            var inkPoints = new List<InkPoint>();
+            var stylusPoints = new StylusPointCollection();
             foreach (var pt in sa.Points)
             {
                 if (pt == null || pt.Length < 2) continue;
-                inkPoints.Add(new InkPoint(new Point(pt[0], pt[1]), 0.5f));
+                stylusPoints.Add(new StylusPoint(pt[0], pt[1]));
             }
 
-            if (inkPoints.Count > 0)
+            if (stylusPoints.Count > 0)
             {
-                var builder = new InkStrokeBuilder();
-                builder.SetDefaultDrawingAttributes(attrs);
-
-                if (inkPoints.Count == 1)
+                if (stylusPoints.Count == 1)
                 {
-                    inkPoints.Add(new InkPoint(new Point(inkPoints[0].Position.X + 0.1, inkPoints[0].Position.Y), 0.5f));
+                    stylusPoints.Add(new StylusPoint(stylusPoints[0].X + 0.1, stylusPoints[0].Y));
                 }
 
-                var stroke = builder.CreateStrokeFromInkPoints(inkPoints, Matrix3x2.Identity);
-                InkCanvas.InkPresenter.StrokeContainer.AddStroke(stroke);
+                var stroke = new Stroke(stylusPoints);
+                stroke.DrawingAttributes = attrs;
+                InkCanvas.Strokes.Add(stroke);
             }
         }
 
         public void ClearStrokes()
         {
-            InkCanvas.InkPresenter.StrokeContainer.Clear();
+            InkCanvas.Strokes.Clear();
         }
     }
 }

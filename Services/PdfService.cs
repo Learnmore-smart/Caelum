@@ -1,224 +1,126 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Runtime.InteropServices.WindowsRuntime;
 using System.Threading;
 using System.Threading.Tasks;
-using Windows.Storage;
-using Windows.Storage.Streams;
-using Microsoft.UI.Xaml.Media.Imaging;
+using System.Windows.Media.Imaging;
 using PdfSharpCore.Drawing;
 using PdfSharpCore.Pdf;
 using PdfSharpCore.Pdf.IO;
 using PdfSharpCore.Pdf.Annotations;
 using PdfSharpCore.Pdf.Advanced;
 using System.Linq;
+using PdfiumViewer;
 
-// Alias to resolve ambiguity
-using WinPdfDocument = Windows.Data.Pdf.PdfDocument;
-using WinPdfPage = Windows.Data.Pdf.PdfPage;
-using SharpPdfDocument = PdfSharpCore.Pdf.PdfDocument;
-using SharpPdfPage = PdfSharpCore.Pdf.PdfPage;
+using PdfiumPdfDocument = PdfiumViewer.PdfDocument;
+using PdfSharpPdfRectangle = PdfSharpCore.Pdf.PdfRectangle;
 
 namespace WindowsNotesApp.Services
 {
     public class PdfService
     {
         private readonly SemaphoreSlim _documentLock = new SemaphoreSlim(1, 1);
-        private WinPdfDocument _winRtPdfDocument;
-        private StorageFile _sourceFile;
-        private IRandomAccessStream _keepAliveStream;
+        private PdfiumPdfDocument _pdfDocument;
+        private string _sourceFilePath;
 
-        public int PageCount => _winRtPdfDocument != null ? (int)_winRtPdfDocument.PageCount : 0;
+        public int PageCount => _pdfDocument?.PageCount ?? 0;
         public Dictionary<int, Models.PageAnnotation> ExtractedAnnotations { get; private set; } = new();
-
-        public async Task LoadPdfAsync(StorageFile file, CancellationToken cancellationToken = default)
-        {
-            await LoadPdfCoreAsync(file: file, filePath: null, cancellationToken);
-        }
 
         public async Task LoadPdfAsync(string filePath, CancellationToken cancellationToken = default)
         {
-            try
-            {
-                var file = await StorageFile.GetFileFromPathAsync(filePath);
-                if (file != null)
-                {
-                    await LoadPdfCoreAsync(file: file, filePath: filePath, cancellationToken);
-                    return;
-                }
-            }
-            catch
-            {
-                // Fallback
-            }
-
-            await LoadPdfCoreAsync(file: null, filePath: filePath, cancellationToken);
+            await LoadPdfCoreAsync(filePath, cancellationToken);
         }
 
-        private async Task LoadPdfCoreAsync(StorageFile file, string filePath, CancellationToken cancellationToken)
+        private async Task LoadPdfCoreAsync(string filePath, CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
             await _documentLock.WaitAsync(cancellationToken);
             try
             {
-                _winRtPdfDocument = null;
-                _keepAliveStream?.Dispose();
-                _keepAliveStream = null;
-                _sourceFile = file;
+                _pdfDocument?.Dispose();
+                _pdfDocument = null;
+                _sourceFilePath = filePath;
 
-                byte[] fileBytes = null;
-                if (file != null)
-                {
-                    System.Diagnostics.Debug.WriteLine("LoadPdfCoreAsync: reading via StorageFile");
-                    using (var ras = await file.OpenReadAsync())
-                    {
-                        using (var stream = ras.AsStreamForRead())
-                        {
-                            using (var ms = new MemoryStream())
-                            {
-                                await stream.CopyToAsync(ms);
-                                fileBytes = ms.ToArray();
-                            }
-                        }
-                    }
-                }
-                else if (!string.IsNullOrEmpty(filePath))
-                {
-                    System.Diagnostics.Debug.WriteLine($"LoadPdfCoreAsync: reading via path: {filePath}");
-                    var fileInfo = new FileInfo(filePath);
-                    if (!fileInfo.Exists) throw new FileNotFoundException($"PDF file not found: {filePath}");
-                    if (fileInfo.Length == 0) throw new InvalidOperationException($"PDF file is empty: {filePath}");
-                    fileBytes = await File.ReadAllBytesAsync(filePath, cancellationToken);
-                }
+                if (!File.Exists(filePath))
+                    throw new FileNotFoundException($"PDF file not found: {filePath}");
 
-                if (fileBytes != null)
-                {
-                    System.Diagnostics.Debug.WriteLine($"LoadPdfCoreAsync: read {fileBytes.Length} bytes");
-                }
+                byte[] fileBytes = await File.ReadAllBytesAsync(filePath, cancellationToken);
+                if (fileBytes == null || fileBytes.Length == 0)
+                    throw new InvalidOperationException($"PDF file is empty: {filePath}");
+
+                System.Diagnostics.Debug.WriteLine($"LoadPdfCoreAsync: read {fileBytes.Length} bytes");
 
                 cancellationToken.ThrowIfCancellationRequested();
 
-                // 1. Try to extract and strip annotations (only if we have bytes)
                 byte[] strippedBytes = null;
-                if (fileBytes != null && fileBytes.Length > 0)
+                try
                 {
-                    try
+                    using (var sourceMs = new MemoryStream(fileBytes))
                     {
-                        using (var sourceMs = new MemoryStream(fileBytes))
+                        using (var strippedMs = new MemoryStream())
                         {
-                            using (var strippedMs = new MemoryStream())
-                            {
-                                ExtractAndStripAnnotations(sourceMs, strippedMs);
-                                strippedBytes = strippedMs.ToArray();
-                            }
+                            ExtractAndStripAnnotations(sourceMs, strippedMs);
+                            strippedBytes = strippedMs.ToArray();
                         }
-                        System.Diagnostics.Debug.WriteLine($"LoadPdfCoreAsync: annotation stripping produced {strippedBytes.Length} bytes");
                     }
-                    catch (Exception ex)
-                    {
-                        System.Diagnostics.Debug.WriteLine($"LoadPdfCoreAsync: annotation stripping failed: {ex.Message}");
-                        ExtractedAnnotations.Clear();
-                    }
+                    System.Diagnostics.Debug.WriteLine($"LoadPdfCoreAsync: annotation stripping produced {strippedBytes.Length} bytes");
                 }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"LoadPdfCoreAsync: annotation stripping failed: {ex.Message}");
+                    ExtractedAnnotations.Clear();
+                }
+
                 cancellationToken.ThrowIfCancellationRequested();
 
-                // 2. Try loading with multiple strategies
-                // Priority: stripped bytes (in memory) > original bytes (in memory) > Direct StorageFile stream > StorageFile from path
-                WinPdfDocument loadedDoc = null;
-                IRandomAccessStream keepAlive = null;
+                PdfiumPdfDocument loadedDoc = null;
                 Exception lastException = null;
 
-                // Attempt A: stripped bytes (if annotation stripping succeeded)
                 if (loadedDoc == null && strippedBytes != null && strippedBytes.Length > 0)
                 {
-                    IRandomAccessStream rasA = null;
                     try
                     {
                         System.Diagnostics.Debug.WriteLine("LoadPdfCoreAsync: attempt A - loading stripped bytes");
-                        rasA = new InMemoryRandomAccessStream();
-                        await WriteBytesToStreamAsync(rasA, strippedBytes);
-                        loadedDoc = await WinPdfDocument.LoadFromStreamAsync(rasA).AsTask(cancellationToken);
-                        keepAlive = rasA;
-                        rasA = null; // Prevent disposal
+                        var ms = new MemoryStream(strippedBytes);
+                        loadedDoc = PdfiumPdfDocument.Load(ms);
                         System.Diagnostics.Debug.WriteLine("LoadPdfCoreAsync: attempt A succeeded");
                     }
                     catch (Exception ex)
                     {
                         lastException = ex;
-                        string cName = ex.GetType().Name;
-                        System.Diagnostics.Debug.WriteLine($"LoadPdfCoreAsync: attempt A failed: {cName}: {ex.Message}");
+                        System.Diagnostics.Debug.WriteLine($"LoadPdfCoreAsync: attempt A failed: {ex.Message}");
                         ExtractedAnnotations.Clear();
-                    }
-                    finally
-                    {
-                        rasA?.Dispose();
                     }
                 }
 
-                // Attempt B: original bytes
                 if (loadedDoc == null && fileBytes != null && fileBytes.Length > 0)
                 {
-                    IRandomAccessStream rasB = null;
                     try
                     {
                         System.Diagnostics.Debug.WriteLine("LoadPdfCoreAsync: attempt B - loading original bytes");
-                        rasB = new InMemoryRandomAccessStream();
-                        await WriteBytesToStreamAsync(rasB, fileBytes);
-                        loadedDoc = await WinPdfDocument.LoadFromStreamAsync(rasB).AsTask(cancellationToken);
-                        keepAlive = rasB;
-                        rasB = null; // Prevent disposal
+                        var ms = new MemoryStream(fileBytes);
+                        loadedDoc = PdfiumPdfDocument.Load(ms);
                         System.Diagnostics.Debug.WriteLine("LoadPdfCoreAsync: attempt B succeeded");
                     }
                     catch (Exception ex)
                     {
                         lastException = ex;
-                        string cName = ex.GetType().Name;
-                        System.Diagnostics.Debug.WriteLine($"LoadPdfCoreAsync: attempt B failed: {cName}: {ex.Message}");
-                    }
-                    finally
-                    {
-                        rasB?.Dispose();
+                        System.Diagnostics.Debug.WriteLine($"LoadPdfCoreAsync: attempt B failed: {ex.Message}");
                     }
                 }
 
-                // Attempt C: Direct StorageFile stream (Fallback)
-                if (loadedDoc == null && file != null)
+                if (loadedDoc == null)
                 {
                     try
                     {
-                        System.Diagnostics.Debug.WriteLine("LoadPdfCoreAsync: attempt C - loading via direct StorageFile stream");
-                        var directRas = await file.OpenReadAsync();
-                        loadedDoc = await WinPdfDocument.LoadFromStreamAsync(directRas).AsTask(cancellationToken);
-                        keepAlive = directRas;
+                        System.Diagnostics.Debug.WriteLine("LoadPdfCoreAsync: attempt C - loading from file path");
+                        loadedDoc = PdfiumPdfDocument.Load(filePath);
                         System.Diagnostics.Debug.WriteLine("LoadPdfCoreAsync: attempt C succeeded");
                     }
                     catch (Exception ex)
                     {
                         lastException = ex;
-                        string cName = ex.GetType().Name;
-                        System.Diagnostics.Debug.WriteLine($"LoadPdfCoreAsync: attempt C failed: {cName}: {ex.Message}");
-                    }
-                }
-
-                // Attempt D: StorageFile from path (Fallback)
-                if (loadedDoc == null && file == null && !string.IsNullOrEmpty(filePath))
-                {
-                    try
-                    {
-                        System.Diagnostics.Debug.WriteLine("LoadPdfCoreAsync: attempt D - loading via StorageFile from path");
-                        var sf = await StorageFile.GetFileFromPathAsync(filePath);
-                        var directRas = await sf.OpenReadAsync();
-                        loadedDoc = await WinPdfDocument.LoadFromStreamAsync(directRas).AsTask(cancellationToken);
-                        keepAlive = directRas;
-                        _sourceFile = sf;
-                        System.Diagnostics.Debug.WriteLine("LoadPdfCoreAsync: attempt D succeeded");
-                    }
-                    catch (Exception ex)
-                    {
-                        lastException = ex;
-                        string cName = ex.GetType().Name;
-                        System.Diagnostics.Debug.WriteLine($"LoadPdfCoreAsync: attempt D failed: {cName}: {ex.Message}");
+                        System.Diagnostics.Debug.WriteLine($"LoadPdfCoreAsync: attempt C failed: {ex.Message}");
                     }
                 }
 
@@ -231,25 +133,12 @@ namespace WindowsNotesApp.Services
                 }
 
                 System.Diagnostics.Debug.WriteLine($"LoadPdfCoreAsync: loaded successfully, {loadedDoc.PageCount} pages");
-                _winRtPdfDocument = loadedDoc;
-                _keepAliveStream = keepAlive;
+                _pdfDocument = loadedDoc;
             }
             finally
             {
                 _documentLock.Release();
             }
-        }
-
-        private static async Task WriteBytesToStreamAsync(IRandomAccessStream ras, byte[] bytes)
-        {
-            using (var writer = new DataWriter(ras))
-            {
-                writer.WriteBytes(bytes);
-                await writer.StoreAsync();
-                await writer.FlushAsync();
-                writer.DetachStream();
-            }
-            ras.Seek(0);
         }
 
         private void ExtractAndStripAnnotations(Stream sourceStream, Stream outputStream)
@@ -287,7 +176,6 @@ namespace WindowsNotesApp.Services
                                 double h_ui = rect.Height * scale;
                                 double y_ui = (pageHeight - rect.Y1 - rect.Height) * scale;
 
-                                // Parse DA for color/size (naive fallback)
                                 double fontSize = 18;
                                 byte r = 0, g = 0, b = 0;
                                 string da = dict.Elements.GetString("/DA") ?? "";
@@ -313,7 +201,6 @@ namespace WindowsNotesApp.Services
                                     R = r, G = g, B = b
                                 });
 
-                                // Only remove annotations we can edit (or all if we want full takeover)
                                 elementsToRemove.Add(annotItem);
                             }
                             else if (subtype == "/Ink")
@@ -321,7 +208,6 @@ namespace WindowsNotesApp.Services
                                 var inkList = dict.Elements.GetArray("/InkList");
                                 if (inkList != null && inkList.Elements.Count > 0)
                                 {
-                                    // Each element in InkList is a separate stroke
                                     foreach (var strokeItem in inkList.Elements)
                                     {
                                         var pointArray = (strokeItem as PdfReference)?.Value as PdfArray ?? strokeItem as PdfArray;
@@ -329,7 +215,6 @@ namespace WindowsNotesApp.Services
                                         {
                                             var strokeAnnot = new Models.StrokeAnnotation();
 
-                                            // Color
                                             var cArray = dict.Elements.GetArray("/C");
                                             if (cArray != null && cArray.Elements.Count >= 3)
                                             {
@@ -338,12 +223,10 @@ namespace WindowsNotesApp.Services
                                                 strokeAnnot.B = (byte)(GetDouble(cArray.Elements[2]) * 255);
                                             }
 
-                                            // Opacity / Highlighter
                                             double ca = dict.Elements.ContainsKey("/CA") ? GetDouble(dict.Elements["/CA"], 1.0) : 1.0;
                                             strokeAnnot.A = (byte)(ca * 255);
                                             strokeAnnot.IsHighlighter = ca < 1.0;
 
-                                            // Size
                                             var bs = dict.Elements.GetDictionary("/BS");
                                             if (bs != null) strokeAnnot.Size = (bs.Elements.ContainsKey("/W") ? GetDouble(bs.Elements["/W"], 2.0) : 2.0) * scale;
 
@@ -379,26 +262,33 @@ namespace WindowsNotesApp.Services
             document.Save(outputStream);
         }
 
-        public async Task<BitmapImage> RenderPageAsync(uint pageIndex, CancellationToken cancellationToken = default)
+        public async Task<BitmapImage> RenderPageAsync(int pageIndex, CancellationToken cancellationToken = default)
         {
             cancellationToken.ThrowIfCancellationRequested();
             await _documentLock.WaitAsync(cancellationToken);
             try
             {
-                if (_winRtPdfDocument == null) return null;
-                if (pageIndex >= _winRtPdfDocument.PageCount) return null;
+                if (_pdfDocument == null) return null;
+                if (pageIndex < 0 || pageIndex >= _pdfDocument.PageCount) return null;
 
-                using (WinPdfPage page = _winRtPdfDocument.GetPage(pageIndex))
+                var size = _pdfDocument.PageSizes[pageIndex];
+                int width = (int)size.Width;
+                int height = (int)size.Height;
+
+                using (var image = _pdfDocument.Render(pageIndex, width, height, 96, 96, PdfRenderFlags.Annotations))
                 {
-                    using (var stream = new InMemoryRandomAccessStream())
+                    using (var ms = new MemoryStream())
                     {
-                        await page.RenderToStreamAsync(stream).AsTask(cancellationToken);
-                        cancellationToken.ThrowIfCancellationRequested();
-                        stream.Seek(0);
+                        image.Save(ms, System.Drawing.Imaging.ImageFormat.Png);
+                        ms.Seek(0, SeekOrigin.Begin);
 
-                        var image = new BitmapImage();
-                        await image.SetSourceAsync(stream);
-                        return image;
+                        var bitmap = new BitmapImage();
+                        bitmap.BeginInit();
+                        bitmap.CacheOption = BitmapCacheOption.OnLoad;
+                        bitmap.StreamSource = ms;
+                        bitmap.EndInit();
+                        bitmap.Freeze();
+                        return bitmap;
                     }
                 }
             }
@@ -408,18 +298,18 @@ namespace WindowsNotesApp.Services
             }
         }
 
-        public async Task<byte[]> RenderPagePngBytesAsync(uint pageIndex, CancellationToken cancellationToken = default)
+        public async Task<byte[]> RenderPagePngBytesAsync(int pageIndex, CancellationToken cancellationToken = default)
         {
             System.Diagnostics.Debug.WriteLine($"RenderPagePngBytesAsync: start for page {pageIndex}");
 
-            if (_winRtPdfDocument == null)
+            if (_pdfDocument == null)
             {
-                System.Diagnostics.Debug.WriteLine($"RenderPagePngBytesAsync: _winRtPdfDocument is null");
+                System.Diagnostics.Debug.WriteLine($"RenderPagePngBytesAsync: _pdfDocument is null");
                 return null;
             }
-            if (pageIndex >= _winRtPdfDocument.PageCount)
+            if (pageIndex < 0 || pageIndex >= _pdfDocument.PageCount)
             {
-                System.Diagnostics.Debug.WriteLine($"RenderPagePngBytesAsync: pageIndex {pageIndex} >= PageCount {_winRtPdfDocument.PageCount}");
+                System.Diagnostics.Debug.WriteLine($"RenderPagePngBytesAsync: pageIndex {pageIndex} out of range");
                 return null;
             }
 
@@ -428,44 +318,33 @@ namespace WindowsNotesApp.Services
             await _documentLock.WaitAsync(cancellationToken);
             try
             {
-                if (_winRtPdfDocument == null)
+                if (_pdfDocument == null)
                 {
-                    System.Diagnostics.Debug.WriteLine($"RenderPagePngBytesAsync: _winRtPdfDocument is null after lock");
+                    System.Diagnostics.Debug.WriteLine($"RenderPagePngBytesAsync: _pdfDocument is null after lock");
                     return null;
                 }
-                if (pageIndex >= _winRtPdfDocument.PageCount)
+                if (pageIndex < 0 || pageIndex >= _pdfDocument.PageCount)
                 {
                     System.Diagnostics.Debug.WriteLine($"RenderPagePngBytesAsync: pageIndex check failed after lock");
                     return null;
                 }
 
                 System.Diagnostics.Debug.WriteLine($"RenderPagePngBytesAsync: getting page {pageIndex}");
-                using (WinPdfPage page = _winRtPdfDocument.GetPage(pageIndex))
+                var size = _pdfDocument.PageSizes[pageIndex];
+                int width = (int)size.Width;
+                int height = (int)size.Height;
+
+                System.Diagnostics.Debug.WriteLine($"RenderPagePngBytesAsync: page {pageIndex} size: {width}x{height}");
+                
+                using (var image = _pdfDocument.Render(pageIndex, width, height, 96, 96, PdfRenderFlags.Annotations))
                 {
-                    System.Diagnostics.Debug.WriteLine($"RenderPagePngBytesAsync: page {pageIndex} obtained, rendering...");
-                    using var stream = new InMemoryRandomAccessStream();
-                    await page.RenderToStreamAsync(stream).AsTask(cancellationToken);
-                    cancellationToken.ThrowIfCancellationRequested();
-
-                    var sizeUlong = stream.Size;
-                    System.Diagnostics.Debug.WriteLine($"RenderPagePngBytesAsync: rendered, stream size = {sizeUlong}");
-
-                    if (sizeUlong > uint.MaxValue)
+                    using (var ms = new MemoryStream())
                     {
-                        throw new InvalidOperationException("Rendered page stream is too large.");
+                        image.Save(ms, System.Drawing.Imaging.ImageFormat.Png);
+                        var bytes = ms.ToArray();
+                        System.Diagnostics.Debug.WriteLine($"RenderPagePngBytesAsync: returning {bytes.Length} bytes");
+                        return bytes;
                     }
-
-                    var size = (uint)sizeUlong;
-                    stream.Seek(0);
-
-                    using var input = stream.GetInputStreamAt(0);
-                    using var reader = new DataReader(input);
-                    await reader.LoadAsync(size).AsTask(cancellationToken);
-
-                    var bytes = new byte[size];
-                    reader.ReadBytes(bytes);
-                    System.Diagnostics.Debug.WriteLine($"RenderPagePngBytesAsync: returning {bytes.Length} bytes");
-                    return bytes;
                 }
             }
             catch (Exception ex)
@@ -482,21 +361,16 @@ namespace WindowsNotesApp.Services
 
         public async Task SaveAnnotationsToPdfAsync(string filePath, Dictionary<int, Models.PageAnnotation> annotations)
         {
-            // Lock to ensure we don't read/write simultaneously
             await _documentLock.WaitAsync();
             try
             {
-                // 1. Release locks on the current file so we can overwrite it
-                _winRtPdfDocument = null;
-                _keepAliveStream?.Dispose();
-                _keepAliveStream = null;
+                _pdfDocument?.Dispose();
+                _pdfDocument = null;
 
-                // 2. Read the original bytes
                 if (!File.Exists(filePath)) throw new FileNotFoundException("PDF to save not found.");
                 var fileBytes = await File.ReadAllBytesAsync(filePath);
                 using var sourceMs = new MemoryStream(fileBytes);
 
-                // 3. Apply annotations
                 using (var document = PdfReader.Open(sourceMs, PdfDocumentOpenMode.Modify))
                 {
                     double scale = 72.0 / 96.0;
@@ -506,7 +380,6 @@ namespace WindowsNotesApp.Services
                         var pdfPage = document.Pages[i];
                         double pageHeight = pdfPage.Height.Point;
 
-                        // First remove all existing FreeText/Ink to replace with current state
                         var annots = pdfPage.Elements.GetArray("/Annots");
                         if (annots != null)
                         {
@@ -525,15 +398,14 @@ namespace WindowsNotesApp.Services
 
                         if (annotations.TryGetValue(i, out var pageAnnots))
                         {
-                            // Add Text
                             foreach (var textItem in pageAnnots.Texts)
                             {
-                                double w = 300 * scale; // Approximate width if we don't store it
+                                double w = 300 * scale;
                                 double h = (textItem.FontSize * 1.5) * scale;
                                 double x = textItem.X * scale;
                                 double y = pageHeight - (textItem.Y * scale) - h;
 
-                                var rect = new PdfRectangle(new XRect(x, y, w, h));
+                                var rect = new PdfSharpPdfRectangle(new XRect(x, y, w, h));
                                 var dict = new PdfDictionary();
                                 dict.Elements.SetName(PdfAnnotation.Keys.Subtype, "/FreeText");
                                 dict.Elements.SetRectangle(PdfAnnotation.Keys.Rect, rect);
@@ -546,36 +418,31 @@ namespace WindowsNotesApp.Services
                                 AddAnnotationToPage(pdfPage, dict);
                             }
 
-                            // Add Strokes
                             foreach (var stroke in pageAnnots.Strokes)
                             {
                                 if (stroke.Points.Count == 0) continue;
 
                                 var dict = new PdfDictionary();
                                 dict.Elements.SetName(PdfAnnotation.Keys.Subtype, "/Ink");
-                                dict.Elements.SetRectangle(PdfAnnotation.Keys.Rect, new PdfRectangle(new XRect(0, 0, pdfPage.Width, pdfPage.Height)));
+                                dict.Elements.SetRectangle(PdfAnnotation.Keys.Rect, new PdfSharpPdfRectangle(new XRect(0, 0, pdfPage.Width, pdfPage.Height)));
                                 dict.Elements.SetString("/NM", $"wna_ink_{Guid.NewGuid()}");
 
-                                // Color
                                 var colorArray = new PdfArray();
                                 colorArray.Elements.Add(new PdfReal(stroke.R / 255.0));
                                 colorArray.Elements.Add(new PdfReal(stroke.G / 255.0));
                                 colorArray.Elements.Add(new PdfReal(stroke.B / 255.0));
                                 dict.Elements.Add("/C", colorArray);
 
-                                // Opacity
                                 if (stroke.A < 255 || stroke.IsHighlighter)
                                 {
                                     dict.Elements.SetReal("/CA", stroke.IsHighlighter ? 0.5 : stroke.A / 255.0);
                                 }
 
-                                // Size
                                 var bsDict = new PdfDictionary();
                                 bsDict.Elements.SetName("/Type", "/Border");
                                 bsDict.Elements.SetReal("/W", stroke.Size * scale);
                                 dict.Elements.Add("/BS", bsDict);
 
-                                // Points
                                 var inkListArray = new PdfArray();
                                 var pointArray = new PdfArray();
                                 foreach (var pt in stroke.Points)
@@ -591,18 +458,15 @@ namespace WindowsNotesApp.Services
                         }
                     }
 
-                    // 4. Save to temp stream
                     using var outStream = new MemoryStream();
                     document.Save(outStream);
 
-                    // 5. Overwrite original file
                     try
                     {
                         await File.WriteAllBytesAsync(filePath, outStream.ToArray());
                     }
                     catch (IOException)
                     {
-                        // Fallback: force garbage collection to release any unmanaged file handles or memory maps.
                         GC.Collect();
                         GC.WaitForPendingFinalizers();
                         await File.WriteAllBytesAsync(filePath, outStream.ToArray());
@@ -615,7 +479,7 @@ namespace WindowsNotesApp.Services
             }
         }
 
-        private void AddAnnotationToPage(SharpPdfPage page, PdfDictionary annotation)
+        private void AddAnnotationToPage(PdfSharpCore.Pdf.PdfPage page, PdfDictionary annotation)
         {
             var annots = page.Elements.GetArray("/Annots");
             if (annots == null)

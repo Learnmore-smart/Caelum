@@ -1,5 +1,5 @@
-using Microsoft.UI.Xaml;
-using Microsoft.UI.Xaml.Controls;
+using System.Windows;
+using System.Windows.Controls;
 
 namespace WindowsNotesApp.Pages
 {
@@ -9,17 +9,7 @@ namespace WindowsNotesApp.Pages
 
         public DataTemplate FileTileTemplate { get; set; }
 
-        protected override DataTemplate SelectTemplateCore(object item)
-        {
-            if (item is HomeTile tile && tile.IsAddTile && AddTileTemplate != null)
-            {
-                return AddTileTemplate;
-            }
-
-            return FileTileTemplate ?? AddTileTemplate ?? base.SelectTemplateCore(item);
-        }
-
-        protected override DataTemplate SelectTemplateCore(object item, DependencyObject container)
+        public override DataTemplate SelectTemplate(object item, DependencyObject container)
         {
             if (item is HomeTile tile && tile.IsAddTile && AddTileTemplate != null)
             {
@@ -36,7 +26,7 @@ namespace WindowsNotesApp.Pages
                 return AddTileTemplate;
             }
 
-            return base.SelectTemplateCore(item, container);
+            return base.SelectTemplate(item, container);
         }
     }
 }

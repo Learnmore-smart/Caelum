@@ -1,129 +1,99 @@
-<Page
-    x:Class="WindowsNotesApp.Pages.HomePage"
-    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-    xmlns:local="using:WindowsNotesApp.Pages"
-    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
-    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-    mc:Ignorable="d"
-    x:DataType="local:HomePage"
-    Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
+<Page x:Class="WindowsNotesApp.Pages.HomePage"
+      xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+      xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+      xmlns:local="clr-namespace:WindowsNotesApp.Pages"
+      Background="Transparent">
 
     <Page.Resources>
-        <DataTemplate x:Key="AddTileTemplate" x:DataType="local:HomeTile">
-            <Grid Width="180" Height="252" AutomationProperties.Name="Add PDF">
-                <Border
-                    CornerRadius="16"
-                    Background="{ThemeResource SystemControlForegroundBaseLowBrush}"
-                    Opacity="0.20"
-                    Margin="0,6,0,0" />
-                <Border
-                    CornerRadius="16"
-                    BorderThickness="1"
-                    BorderBrush="{ThemeResource SystemControlForegroundBaseLowBrush}"
-                    Background="{ThemeResource SystemControlBackgroundChromeMediumLowBrush}"
-                    Padding="16"
-                    Margin="0,0,0,6">
-                    <Grid RowDefinitions="*,Auto" RowSpacing="12">
-                        <Border
-                            CornerRadius="12"
-                            Background="{ThemeResource SystemControlBackgroundChromeMediumBrush}">
-                            <Viewbox Stretch="Uniform" MaxWidth="64" MaxHeight="64">
-                                <SymbolIcon Symbol="Add" />
-                            </Viewbox>
-                        </Border>
-                        <TextBlock
-                            Grid.Row="1"
-                            Text="Add PDF"
-                            FontWeight="SemiBold"
-                            HorizontalAlignment="Center"
-                            TextAlignment="Center" />
-                    </Grid>
-                </Border>
-            </Grid>
+        <Style x:Key="TileButtonStyle" TargetType="Button">
+            <Setter Property="Background" Value="#FAFAFA"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="BorderBrush" Value="#30000000"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Grid>
+                            <Border x:Name="Shadow" CornerRadius="16" Background="#20000000" Margin="0,6,0,0"/>
+                            <Border x:Name="Main" CornerRadius="16" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" Padding="16" Margin="0,0,0,6">
+                                <ContentPresenter/>
+                            </Border>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Main" Property="Background" Value="#F0F0F0"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Shadow" Property="Margin" Value="0,4,0,0"/>
+                                <Setter TargetName="Main" Property="Margin" Value="0,0,0,4"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <DataTemplate x:Key="AddTileTemplate">
+            <Button Style="{StaticResource TileButtonStyle}" Width="180" Height="252" Click="AddTile_Click">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+                    <Border CornerRadius="12" Background="#F0F0F0">
+                        <Viewbox Stretch="Uniform" MaxWidth="64" MaxHeight="64">
+                            <TextBlock Text="&#xE710;" FontFamily="Segoe MDL2 Assets" FontSize="48" Foreground="#666666" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Viewbox>
+                    </Border>
+                    <TextBlock Grid.Row="1" Text="Add PDF" FontWeight="SemiBold" HorizontalAlignment="Center" TextAlignment="Center" Margin="0,12,0,0" Foreground="#333333"/>
+                </Grid>
+            </Button>
         </DataTemplate>
 
-        <DataTemplate x:Key="FileTileTemplate" x:DataType="local:HomeTile">
-            <Grid
-                Width="180"
-                Height="252"
-                AutomationProperties.Name="{x:Bind FileName}"
-                AutomationProperties.HelpText="{x:Bind Path}">
-                <Border
-                    CornerRadius="16"
-                    Background="{ThemeResource SystemControlForegroundBaseLowBrush}"
-                    Opacity="0.20"
-                    Margin="0,6,0,0" />
-                <Border
-                    CornerRadius="16"
-                    BorderThickness="1"
-                    BorderBrush="{ThemeResource SystemControlForegroundBaseLowBrush}"
-                    Background="{ThemeResource SystemControlBackgroundChromeMediumLowBrush}"
-                    Padding="16"
-                    Margin="0,0,0,6">
-                    <Grid RowDefinitions="*,Auto" RowSpacing="12">
-                        <Border
-                            CornerRadius="12"
-                            Background="{ThemeResource SystemControlBackgroundChromeMediumBrush}">
-                            <Viewbox Stretch="Uniform" MaxWidth="56" MaxHeight="56">
-                                <SymbolIcon Symbol="Document" />
-                            </Viewbox>
-                        </Border>
-                        <TextBlock
-                            Grid.Row="1"
-                            Text="{x:Bind FileName}"
-                            TextTrimming="CharacterEllipsis"
-                            MaxLines="1"
-                            ToolTipService.ToolTip="{x:Bind Path}" />
-                    </Grid>
-                </Border>
-            </Grid>
+        <DataTemplate x:Key="FileTileTemplate">
+            <Button Style="{StaticResource TileButtonStyle}" Width="180" Height="252" Tag="{Binding}" Click="FileTile_Click">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+                    <Border CornerRadius="12" Background="#F0F0F0">
+                        <Viewbox Stretch="Uniform" MaxWidth="56" MaxHeight="56">
+                            <TextBlock Text="&#xE8A5;" FontFamily="Segoe MDL2 Assets" FontSize="48" Foreground="#666666" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Viewbox>
+                    </Border>
+                    <TextBlock Grid.Row="1" Text="{Binding FileName}" TextTrimming="CharacterEllipsis" MaxHeight="20" Margin="0,12,0,0" ToolTip="{Binding Path}" Foreground="#333333"/>
+                </Grid>
+            </Button>
         </DataTemplate>
 
-        <local:HomeTileTemplateSelector
-            x:Key="HomeTileTemplateSelector"
-            AddTileTemplate="{StaticResource AddTileTemplate}"
-            FileTileTemplate="{StaticResource FileTileTemplate}" />
+        <local:HomeTileTemplateSelector x:Key="HomeTileTemplateSelector" AddTileTemplate="{StaticResource AddTileTemplate}" FileTileTemplate="{StaticResource FileTileTemplate}"/>
     </Page.Resources>
 
-    <Grid x:Name="LayoutRoot" Padding="24" RowSpacing="16">
+    <Grid x:Name="LayoutRoot" Margin="24">
         <Grid.RowDefinitions>
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
 
-        <StackPanel Orientation="Vertical" Spacing="4">
-            <TextBlock
-                Text="Library"
-                Style="{StaticResource TitleTextBlockStyle}"
-                AutomationProperties.HeadingLevel="Level1" />
-            <TextBlock Text="Recent PDFs" Opacity="0.75" />
+        <StackPanel Orientation="Vertical" Margin="0,0,0,16">
+            <TextBlock Text="Library" FontSize="28" FontWeight="Bold" Foreground="#333333"/>
+            <TextBlock Text="Recent PDFs" Opacity="0.75" Margin="0,4,0,0" Foreground="#666666"/>
         </StackPanel>
 
-        <Grid Grid.Row="1">
-            <GridView
-                x:Name="TilesGrid"
-                ItemsSource="{x:Bind HomeTiles, Mode=OneWay}"
-                ItemTemplateSelector="{StaticResource HomeTileTemplateSelector}"
-                IsItemClickEnabled="True"
-                ItemClick="TilesGrid_ItemClick"
-                AutomationProperties.Name="Recent PDFs"
-                SelectionMode="None">
-                <GridView.ItemsPanel>
-                    <ItemsPanelTemplate>
-                        <ItemsWrapGrid Orientation="Horizontal" ItemWidth="196" ItemHeight="268" />
-                    </ItemsPanelTemplate>
-                </GridView.ItemsPanel>
-                <GridView.ItemContainerStyle>
-                    <Style TargetType="GridViewItem">
-                        <Setter Property="Margin" Value="8" />
-                        <Setter Property="Padding" Value="0" />
-                        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
-                        <Setter Property="VerticalContentAlignment" Value="Stretch" />
-                        <Setter Property="UseSystemFocusVisuals" Value="True" />
-                    </Style>
-                </GridView.ItemContainerStyle>
-            </GridView>
-        </Grid>
+        <ItemsControl Grid.Row="1" x:Name="TilesGrid"
+                      ItemsSource="{Binding HomeTiles}"
+                      ItemTemplateSelector="{StaticResource HomeTileTemplateSelector}">
+            <ItemsControl.ItemsPanel>
+                <ItemsPanelTemplate>
+                    <WrapPanel Orientation="Horizontal"/>
+                </ItemsPanelTemplate>
+            </ItemsControl.ItemsPanel>
+            <ItemsControl.ItemContainerStyle>
+                <Style TargetType="ContentPresenter">
+                    <Setter Property="Margin" Value="8"/>
+                </Style>
+            </ItemsControl.ItemContainerStyle>
+        </ItemsControl>
     </Grid>
 </Page>

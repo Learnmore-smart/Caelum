@@ -1,30 +1,24 @@
 <Project Sdk="Microsoft.NET.Sdk">
+
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
-    <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
+    <TargetFramework>net8.0-windows</TargetFramework>
     <RootNamespace>WindowsNotesApp</RootNamespace>
-    <ApplicationManifest>app.manifest</ApplicationManifest>
-    <Platforms>x64</Platforms>
-    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
-    <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
-    <UseWinUI>true</UseWinUI>
-    <WindowsPackageType>None</WindowsPackageType>
-    <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
-    <UseXamlCompilerExecutable>false</UseXamlCompilerExecutable>
+    <UseWPF>true</UseWPF>
     <Nullable>disable</Nullable>
-    <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
-    <!-- Override AppxMSBuildToolsPath to fix build with .NET 10 SDK preview -->
-     <!-- <AppxMSBuildToolsPath>C:\Program Files\Microsoft Visual Studio\2022\Community\MSBuild\Microsoft\VisualStudio\v17.0\AppxPackage\</AppxMSBuildToolsPath> -->
-     <!-- <PriProjTaskAssembly>C:\Users\noahz\.nuget\packages\microsoft.windowsappsdk\1.6.241114003\tools\net6.0\Microsoft.Build.Msix.dll</PriProjTaskAssembly> -->
-     <!-- <AppxGeneratePriEnabled>false</AppxGeneratePriEnabled> -->
-   </PropertyGroup>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <AssemblyName>WindowsNotesApp</AssemblyName>
+    <Version>1.0.0.0</Version>
+    <Authors>Noah</Authors>
+    <Product>Windows Notes App</Product>
+    <Description>A PDF annotation app with ink support</Description>
+  </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.7705" />
-    <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.8.260209005" />
+    <PackageReference Include="PdfiumViewer" Version="2.13.0" />
+    <PackageReference Include="PdfiumViewer.Native.x86_64.v8-xfa" Version="2018.4.8.256" />
     <PackageReference Include="PdfSharpCore" Version="1.3.67" />
-    <PackageReference Include="System.Security.Permissions" Version="6.0.0" PrivateAssets="all" />
     <PackageReference Include="System.Drawing.Common" Version="8.0.0" />
   </ItemGroup>
+
 </Project>
