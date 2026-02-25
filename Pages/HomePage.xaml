@@ -5,95 +5,141 @@
       Background="Transparent">
 
     <Page.Resources>
-        <Style x:Key="TileButtonStyle" TargetType="Button">
-            <Setter Property="Background" Value="#FAFAFA"/>
-            <Setter Property="BorderThickness" Value="1"/>
-            <Setter Property="BorderBrush" Value="#30000000"/>
+        <!-- Invisible button style for clean tile clicks -->
+        <Style x:Key="InvisibleButtonStyle" TargetType="Button">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
-                        <Grid>
-                            <Border x:Name="Shadow" CornerRadius="16" Background="#20000000" Margin="0,6,0,0"/>
-                            <Border x:Name="Main" CornerRadius="16" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" Padding="16" Margin="0,0,0,6">
-                                <ContentPresenter/>
-                            </Border>
-                        </Grid>
-                        <ControlTemplate.Triggers>
-                            <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Main" Property="Background" Value="#F0F0F0"/>
-                            </Trigger>
-                            <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="Shadow" Property="Margin" Value="0,4,0,0"/>
-                                <Setter TargetName="Main" Property="Margin" Value="0,0,0,4"/>
-                            </Trigger>
-                        </ControlTemplate.Triggers>
+                        <Border x:Name="Root" Background="Transparent">
+                            <ContentPresenter/>
+                        </Border>
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
         </Style>
 
+        <!-- Add Tile: dashed border with + icon -->
         <DataTemplate x:Key="AddTileTemplate">
-            <Button Style="{StaticResource TileButtonStyle}" Width="180" Height="252" Click="AddTile_Click">
-                <Grid>
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="*"/>
-                        <RowDefinition Height="Auto"/>
-                    </Grid.RowDefinitions>
-                    <Border CornerRadius="12" Background="#F0F0F0">
-                        <Viewbox Stretch="Uniform" MaxWidth="64" MaxHeight="64">
-                            <TextBlock Text="&#xE710;" FontFamily="Segoe MDL2 Assets" FontSize="48" Foreground="#666666" HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                        </Viewbox>
-                    </Border>
-                    <TextBlock Grid.Row="1" Text="Add PDF" FontWeight="SemiBold" HorizontalAlignment="Center" TextAlignment="Center" Margin="0,12,0,0" Foreground="#333333"/>
-                </Grid>
+            <Button Background="Transparent" BorderThickness="0" Cursor="Hand" Click="AddTile_Click" VerticalAlignment="Top">
+                <Button.Template>
+                    <ControlTemplate TargetType="Button">
+                        <Grid Width="120" Height="160" Margin="20,12,20,44">
+                            <Rectangle x:Name="BgRect" Fill="Transparent" RadiusX="10" RadiusY="10"/>
+                            <Rectangle Stroke="#00A0E8" StrokeThickness="2.5" StrokeDashArray="5,3.5"
+                                       RadiusX="10" RadiusY="10"/>
+                            <TextBlock Text="&#xE710;" FontFamily="Segoe MDL2 Assets" FontSize="30"
+                                       Foreground="#00A0E8" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="BgRect" Property="Fill" Value="#0800A0E8"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Button.Template>
             </Button>
         </DataTemplate>
 
+        <!-- File Tile: notebook icon + info -->
         <DataTemplate x:Key="FileTileTemplate">
-            <Button Style="{StaticResource TileButtonStyle}" Width="180" Height="252" Tag="{Binding}" Click="FileTile_Click">
-                <Grid>
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="*"/>
-                        <RowDefinition Height="Auto"/>
-                    </Grid.RowDefinitions>
-                    <Border CornerRadius="12" Background="#F0F0F0">
-                        <Viewbox Stretch="Uniform" MaxWidth="56" MaxHeight="56">
-                            <TextBlock Text="&#xE8A5;" FontFamily="Segoe MDL2 Assets" FontSize="48" Foreground="#666666" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            <Grid Margin="20,12" Width="160">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+
+                <!-- Notebook icon (clickable) -->
+                <Button Grid.Row="0" Style="{StaticResource InvisibleButtonStyle}"
+                        Tag="{Binding}" Click="FileTile_Click" HorizontalAlignment="Center">
+                    <Grid Width="120" Height="160">
+                        <Grid.RenderTransform>
+                            <ScaleTransform x:Name="TileScale" ScaleX="1" ScaleY="1" CenterX="60" CenterY="80"/>
+                        </Grid.RenderTransform>
+                        <Viewbox Stretch="Uniform" MaxWidth="90" MaxHeight="120">
+                            <Grid Width="80" Height="100">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="8"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <Border Grid.Column="0" Background="#C62828" CornerRadius="2,0,0,2"/>
+                                <Border Grid.Column="1" Background="#8D6E63" CornerRadius="0,4,4,0" Margin="0,0,0,4">
+                                    <Border Margin="6,8,8,8">
+                                        <Grid>
+                                            <Rectangle Fill="#FFF8E1" RadiusX="2" RadiusY="2"/>
+                                            <Line X1="8" Y1="16" X2="44" Y2="16" Stroke="#BDBDBD" StrokeThickness="1.5"/>
+                                            <Line X1="8" Y1="26" X2="44" Y2="26" Stroke="#BDBDBD" StrokeThickness="1.5"/>
+                                            <Line X1="8" Y1="36" X2="44" Y2="36" Stroke="#BDBDBD" StrokeThickness="1.5"/>
+                                        </Grid>
+                                    </Border>
+                                </Border>
+                            </Grid>
                         </Viewbox>
-                    </Border>
-                    <TextBlock Grid.Row="1" Text="{Binding FileName}" TextTrimming="CharacterEllipsis" MaxHeight="20" Margin="0,12,0,0" ToolTip="{Binding Path}" Foreground="#333333"/>
-                </Grid>
-            </Button>
+                    </Grid>
+                </Button>
+
+                <!-- Filename with dropdown chevron -->
+                <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,8,0,0">
+                    <TextBlock Text="{Binding FileName}" TextTrimming="CharacterEllipsis" MaxWidth="130"
+                               FontSize="13" Foreground="#333333" VerticalAlignment="Center"
+                               ToolTip="{Binding Path}"/>
+                    <Button Style="{StaticResource InvisibleButtonStyle}" Tag="{Binding}" Click="TileMenu_Click"
+                            VerticalAlignment="Center" Margin="3,0,0,0" Padding="2">
+                        <TextBlock Text="&#xE70D;" FontFamily="Segoe MDL2 Assets" FontSize="9" Foreground="#999999"/>
+                    </Button>
+                </StackPanel>
+
+                <!-- Page count + date -->
+                <TextBlock Grid.Row="2" Text="{Binding InfoText}" FontSize="12" Foreground="#999999"
+                           HorizontalAlignment="Center" Margin="0,3,0,0"/>
+            </Grid>
         </DataTemplate>
 
-        <local:HomeTileTemplateSelector x:Key="HomeTileTemplateSelector" AddTileTemplate="{StaticResource AddTileTemplate}" FileTileTemplate="{StaticResource FileTileTemplate}"/>
+        <local:HomeTileTemplateSelector x:Key="HomeTileTemplateSelector"
+                                        AddTileTemplate="{StaticResource AddTileTemplate}"
+                                        FileTileTemplate="{StaticResource FileTileTemplate}"/>
     </Page.Resources>
 
-    <Grid x:Name="LayoutRoot" Margin="24">
-        <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="*"/>
-        </Grid.RowDefinitions>
-
-        <StackPanel Orientation="Vertical" Margin="0,0,0,16">
-            <TextBlock Text="Library" FontSize="28" FontWeight="Bold" Foreground="#333333"/>
-            <TextBlock Text="Recent PDFs" Opacity="0.75" Margin="0,4,0,0" Foreground="#666666"/>
-        </StackPanel>
-
-        <ItemsControl Grid.Row="1" x:Name="TilesGrid"
-                      ItemsSource="{Binding HomeTiles}"
-                      ItemTemplateSelector="{StaticResource HomeTileTemplateSelector}">
-            <ItemsControl.ItemsPanel>
-                <ItemsPanelTemplate>
-                    <WrapPanel Orientation="Horizontal"/>
-                </ItemsPanelTemplate>
-            </ItemsControl.ItemsPanel>
-            <ItemsControl.ItemContainerStyle>
-                <Style TargetType="ContentPresenter">
-                    <Setter Property="Margin" Value="8"/>
-                </Style>
-            </ItemsControl.ItemContainerStyle>
-        </ItemsControl>
-    </Grid>
+    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+                  Style="{StaticResource SleekScrollViewer}">
+        <Grid>
+            <!-- Glassmorphism background layer -->
+            <Border CornerRadius="18" Margin="20,16,20,20">
+                <Border.Background>
+                    <SolidColorBrush Color="White" Opacity="0.45"/>
+                </Border.Background>
+                <Border.Effect>
+                    <BlurEffect Radius="40" KernelType="Gaussian"/>
+                </Border.Effect>
+            </Border>
+            <!-- Glass card -->
+            <Border CornerRadius="18" Margin="20,16,20,20"
+                    BorderThickness="1"
+                    BorderBrush="#22FFFFFF">
+                <Border.Background>
+                    <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                        <GradientStop Color="#50FFFFFF" Offset="0"/>
+                        <GradientStop Color="#30FFFFFF" Offset="0.5"/>
+                        <GradientStop Color="#18FFFFFF" Offset="1"/>
+                    </LinearGradientBrush>
+                </Border.Background>
+                <Border.Effect>
+                    <DropShadowEffect BlurRadius="24" ShadowDepth="4" Opacity="0.08" Color="#000"/>
+                </Border.Effect>
+                <ItemsControl x:Name="TilesGrid"
+                              ItemsSource="{Binding HomeTiles}"
+                              ItemTemplateSelector="{StaticResource HomeTileTemplateSelector}"
+                              Margin="12,8,12,12">
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <WrapPanel Orientation="Horizontal"/>
+                        </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                </ItemsControl>
+            </Border>
+        </Grid>
+    </ScrollViewer>
 </Page>

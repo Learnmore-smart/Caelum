@@ -105,43 +105,156 @@ namespace WindowsNotesApp.Pages
             string sizeLabel, double min, double max, double value, double step, Action<double> sizeChanged,
             string colorLabel, Color initialColor, Action<Color> colorChanged)
         {
-            var popup = new Popup { Placement = PlacementMode.Bottom, StaysOpen = false };
-            var panel = new StackPanel { Margin = new Thickness(12) };
-            var border = new Border { Background = Brushes.White, BorderBrush = Brushes.LightGray, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(8), Child = panel };
+            var popup = new Popup { Placement = PlacementMode.Bottom, StaysOpen = false, AllowsTransparency = true };
+            var panel = new StackPanel { Margin = new Thickness(16) };
+            var border = new Border
+            {
+                Background = new SolidColorBrush(Color.FromArgb(250, 255, 255, 255)),
+                BorderBrush = new SolidColorBrush(Color.FromArgb(30, 0, 0, 0)),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(12),
+                Child = panel,
+                Effect = new System.Windows.Media.Effects.DropShadowEffect
+                {
+                    BlurRadius = 20,
+                    ShadowDepth = 4,
+                    Opacity = 0.12,
+                    Color = Colors.Black
+                }
+            };
 
-            var sizeHeader = new TextBlock { Text = sizeLabel, FontSize = 12, Foreground = Brushes.Gray, Margin = new Thickness(0, 0, 0, 8) };
-            var slider = new Slider { Minimum = min, Maximum = max, Value = value, TickFrequency = step, Width = 200 };
+            // Size section
+            var sizeHeader = new TextBlock
+            {
+                Text = sizeLabel,
+                FontSize = 13,
+                FontWeight = FontWeights.SemiBold,
+                Foreground = new SolidColorBrush(Color.FromRgb(80, 80, 80)),
+                Margin = new Thickness(0, 0, 0, 10)
+            };
+            var slider = new Slider
+            {
+                Minimum = min,
+                Maximum = max,
+                Value = value,
+                TickFrequency = step,
+                Width = 240,
+                IsSnapToTickEnabled = true
+            };
             slider.ValueChanged += (s, e) => sizeChanged?.Invoke(e.NewValue);
             panel.Children.Add(sizeHeader);
             panel.Children.Add(slider);
 
             if (colorLabel != null)
             {
-                var colorHeader = new TextBlock { Text = colorLabel, FontSize = 12, Foreground = Brushes.Gray, Margin = new Thickness(0, 12, 0, 8) };
+                // Separator
+                var separator = new Border
+                {
+                    Height = 1,
+                    Background = new SolidColorBrush(Color.FromArgb(25, 0, 0, 0)),
+                    Margin = new Thickness(-16, 14, -16, 14)
+                };
+                panel.Children.Add(separator);
+
+                var colorHeader = new TextBlock
+                {
+                    Text = colorLabel,
+                    FontSize = 13,
+                    FontWeight = FontWeights.SemiBold,
+                    Foreground = new SolidColorBrush(Color.FromRgb(80, 80, 80)),
+                    Margin = new Thickness(0, 0, 0, 10)
+                };
                 panel.Children.Add(colorHeader);
 
-                var colorGrid = new WrapPanel { Width = 200 };
-                var colors = new[] { Colors.Black, Colors.Red, Colors.Blue, Colors.Green, Colors.Orange, Colors.Purple, Colors.Brown, Colors.Gray };
-                foreach (var c in colors)
+                // HSV color palette grid
+                int cols = 12;
+                int rows = 8;
+                double cellSize = 20;
+                var paletteGrid = new Grid { Width = cols * cellSize, Height = rows * cellSize, ClipToBounds = true };
+
+                // Selection indicator border (drawn on top of palette)
+                var selectionIndicator = new Border
                 {
-                    var colorBtn = new Button
+                    Width = cellSize,
+                    Height = cellSize,
+                    BorderBrush = Brushes.White,
+                    BorderThickness = new Thickness(2),
+                    Background = Brushes.Transparent,
+                    IsHitTestVisible = false,
+                    Visibility = Visibility.Collapsed,
+                    HorizontalAlignment = HorizontalAlignment.Left,
+                    VerticalAlignment = VerticalAlignment.Top
+                };
+
+                for (int row = 0; row < rows; row++)
+                {
+                    for (int col = 0; col < cols; col++)
                     {
-                        Width = 24,
-                        Height = 24,
-                        Margin = new Thickness(2),
-                        Background = new SolidColorBrush(c),
-                        Tag = c,
-                        Cursor = Cursors.Hand
-                    };
-                    colorBtn.Click += (s, e) =>
-                    {
-                        var btn = s as Button;
-                        var selectedColor = (Color)btn.Tag;
-                        colorChanged?.Invoke(selectedColor);
-                    };
-                    colorGrid.Children.Add(colorBtn);
+                        Color cellColor;
+                        if (row == 0)
+                        {
+                            // Top row: grayscale from black to white
+                            byte gray = (byte)(col * 255 / (cols - 1));
+                            cellColor = Color.FromRgb(gray, gray, gray);
+                        }
+                        else
+                        {
+                            // HSV palette: hue across columns, saturation/value down rows
+                            double hue = col * 360.0 / cols;
+                            double saturation = 1.0;
+                            double val = 1.0;
+                            if (row <= rows / 2)
+                            {
+                                // Top half: full value, varying saturation (light → saturated)
+                                saturation = (double)row / (rows / 2);
+                            }
+                            else
+                            {
+                                // Bottom half: full saturation, decreasing value (saturated → dark)
+                                val = 1.0 - (double)(row - rows / 2) / (rows / 2);
+                            }
+                            cellColor = HsvToColor(hue, saturation, val);
+                        }
+
+                        var cell = new Border
+                        {
+                            Width = cellSize,
+                            Height = cellSize,
+                            Background = new SolidColorBrush(cellColor),
+                            HorizontalAlignment = HorizontalAlignment.Left,
+                            VerticalAlignment = VerticalAlignment.Top,
+                            Margin = new Thickness(col * cellSize, row * cellSize, 0, 0),
+                            Cursor = Cursors.Hand,
+                            Tag = cellColor
+                        };
+
+                        cell.MouseLeftButtonDown += (s, e) =>
+                        {
+                            var b = s as Border;
+                            var picked = (Color)b.Tag;
+                            selectionIndicator.Margin = b.Margin;
+                            selectionIndicator.Visibility = Visibility.Visible;
+                            colorChanged?.Invoke(picked);
+                            e.Handled = true;
+                        };
+
+                        paletteGrid.Children.Add(cell);
+                    }
                 }
-                panel.Children.Add(colorGrid);
+
+                // Place selection indicator on initial color if found
+                foreach (Border cell in paletteGrid.Children)
+                {
+                    if (cell.Tag is Color c && c == initialColor)
+                    {
+                        selectionIndicator.Margin = cell.Margin;
+                        selectionIndicator.Visibility = Visibility.Visible;
+                        break;
+                    }
+                }
+
+                paletteGrid.Children.Add(selectionIndicator);
+                panel.Children.Add(paletteGrid);
             }
 
             popup.Child = border;
@@ -288,24 +401,6 @@ namespace WindowsNotesApp.Pages
             TextToolButton.IsChecked = tool == ToolType.Text;
             _isUpdatingToolState = false;
 
-            PenActiveIndicator.Visibility = tool == ToolType.Pen ? Visibility.Visible : Visibility.Collapsed;
-            HighlighterActiveIndicator.Visibility = tool == ToolType.Highlighter ? Visibility.Visible : Visibility.Collapsed;
-            EraserActiveIndicator.Visibility = tool == ToolType.Eraser ? Visibility.Visible : Visibility.Collapsed;
-            TextActiveIndicator.Visibility = tool == ToolType.Text ? Visibility.Visible : Visibility.Collapsed;
-
-            PenToolButton.Style = tool == ToolType.Pen
-                ? Application.Current.Resources["ActiveToolbarToggleButtonStyle"] as Style
-                : Application.Current.Resources["ToolbarToggleButtonStyle"] as Style;
-            HighlighterToolButton.Style = tool == ToolType.Highlighter
-                ? Application.Current.Resources["ActiveToolbarToggleButtonStyle"] as Style
-                : Application.Current.Resources["ToolbarToggleButtonStyle"] as Style;
-            EraserToolButton.Style = tool == ToolType.Eraser
-                ? Application.Current.Resources["ActiveToolbarToggleButtonStyle"] as Style
-                : Application.Current.Resources["ToolbarToggleButtonStyle"] as Style;
-            TextToolButton.Style = tool == ToolType.Text
-                ? Application.Current.Resources["ActiveToolbarToggleButtonStyle"] as Style
-                : Application.Current.Resources["ToolbarToggleButtonStyle"] as Style;
-
             UpdateToolIconColors();
             ApplyToolToAllPages();
         }
@@ -313,7 +408,6 @@ namespace WindowsNotesApp.Pages
         private void UpdateToolIconColors()
         {
             PenIcon.Foreground = new SolidColorBrush(_penColor);
-            HighlighterIcon.Foreground = new SolidColorBrush(_highlighterColor);
         }
 
         private void ApplyToolToAllPages()
@@ -371,13 +465,26 @@ namespace WindowsNotesApp.Pages
 
         private void InitializeTextBoxPopup()
         {
-            _textBoxPopup = new Popup { Placement = PlacementMode.Top, StaysOpen = false };
-            _textBoxPopup.Closed += TextBoxPopup_Closed;
+            _textBoxPopup = new Popup { Placement = PlacementMode.Top, StaysOpen = true, AllowsTransparency = true, VerticalOffset = -6 };
 
-            var panel = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(8) };
-            var border = new Border { Background = Brushes.White, BorderBrush = Brushes.LightGray, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(8), Child = panel };
+            var panel = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(10) };
+            var border = new Border
+            {
+                Background = new SolidColorBrush(Color.FromArgb(250, 255, 255, 255)),
+                BorderBrush = new SolidColorBrush(Color.FromArgb(30, 0, 0, 0)),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(10),
+                Child = panel,
+                Effect = new System.Windows.Media.Effects.DropShadowEffect
+                {
+                    BlurRadius = 16,
+                    ShadowDepth = 3,
+                    Opacity = 0.12,
+                    Color = Colors.Black
+                }
+            };
 
-            var deleteButton = new Button { Content = "Delete", MinWidth = 60, Margin = new Thickness(0, 0, 8, 0), Cursor = Cursors.Hand };
+            var deleteButton = new Button { Content = "删除", MinWidth = 50, Height = 28, Margin = new Thickness(0, 0, 8, 0), Cursor = Cursors.Hand, FontSize = 12 };
             deleteButton.Click += (s, e) => DeleteSelectedTextBox();
 
             _fontSizeComboBox = new ComboBox { Width = 70, Margin = new Thickness(0, 0, 8, 0) };
@@ -385,38 +492,48 @@ namespace WindowsNotesApp.Pages
                 _fontSizeComboBox.Items.Add(size.ToString());
             _fontSizeComboBox.SelectionChanged += FontSizeComboBox_SelectionChanged;
 
-            _colorIndicator = new Border { Width = 24, Height = 24, CornerRadius = new CornerRadius(12), Background = new SolidColorBrush(_textColor) };
-            var colorButton = new Button { Content = _colorIndicator, MinWidth = 40, Cursor = Cursors.Hand };
-            var colorPopup = new Popup { Placement = PlacementMode.Bottom };
-            var colorPanel = new WrapPanel { Margin = new Thickness(8), Width = 150 };
-            var colorBorder = new Border { Background = Brushes.White, BorderBrush = Brushes.LightGray, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(8), Child = colorPanel };
+            _colorIndicator = new Border { Width = 22, Height = 22, CornerRadius = new CornerRadius(11), Background = new SolidColorBrush(_textColor) };
+            var colorButton = new Button { Content = _colorIndicator, MinWidth = 36, Height = 28, Cursor = Cursors.Hand, Background = Brushes.Transparent, BorderThickness = new Thickness(0) };
+            var colorPopup = new Popup { Placement = PlacementMode.Bottom, StaysOpen = false, AllowsTransparency = true };
+            var colorPanel = new WrapPanel { Margin = new Thickness(10), Width = 180 };
+            var colorBorder = new Border
+            {
+                Background = new SolidColorBrush(Color.FromArgb(250, 255, 255, 255)),
+                BorderBrush = new SolidColorBrush(Color.FromArgb(30, 0, 0, 0)),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(10),
+                Child = colorPanel,
+                Effect = new System.Windows.Media.Effects.DropShadowEffect { BlurRadius = 16, ShadowDepth = 3, Opacity = 0.12, Color = Colors.Black }
+            };
 
-            var textColors = new[] { Colors.Black, Colors.Red, Colors.Blue, Colors.Green, Colors.Orange, Colors.Purple, Colors.Brown };
+            var textColors = new[] { Colors.Black, Color.FromRgb(220, 38, 38), Color.FromRgb(37, 99, 235), Color.FromRgb(22, 163, 74), Color.FromRgb(245, 158, 11), Color.FromRgb(147, 51, 234), Color.FromRgb(127, 29, 29) };
             foreach (var c in textColors)
             {
-                var colorBtn = new Button
+                var swatch = new Border
                 {
-                    Width = 24,
-                    Height = 24,
-                    Margin = new Thickness(2),
+                    Width = 28,
+                    Height = 28,
+                    CornerRadius = new CornerRadius(14),
                     Background = new SolidColorBrush(c),
-                    Tag = c,
-                    Cursor = Cursors.Hand
+                    Margin = new Thickness(3),
+                    Cursor = Cursors.Hand,
+                    Tag = c
                 };
-                colorBtn.Click += (s, e) =>
+                swatch.MouseLeftButtonDown += (s, e) =>
                 {
                     if (_selectedTextBox != null)
                     {
-                        var btn = s as Button;
-                        var selectedColor = (Color)btn.Tag;
+                        var sw = s as Border;
+                        var selectedColor = (Color)sw.Tag;
                         _selectedTextBox.Foreground = new SolidColorBrush(selectedColor);
                         _textColor = selectedColor;
                         _colorIndicator.Background = new SolidColorBrush(selectedColor);
                         MarkDirty();
                     }
                     colorPopup.IsOpen = false;
+                    e.Handled = true;
                 };
-                colorPanel.Children.Add(colorBtn);
+                colorPanel.Children.Add(swatch);
             }
 
             colorPopup.Child = colorBorder;
@@ -433,11 +550,10 @@ namespace WindowsNotesApp.Pages
             _textBoxPopup.Child = border;
         }
 
-        private void TextBoxPopup_Closed(object sender, EventArgs e)
-        {
-            if (_selectedTextBox == null) return;
-            DeselectTextBox();
-        }
+        // Popup no longer auto-deselects. Deselection happens via:
+        // - Clicking on canvas background
+        // - Switching tools
+        // - Clicking outside in PageControl_BackgroundPointerPressed
 
         private void FontSizeComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
@@ -480,8 +596,9 @@ namespace WindowsNotesApp.Pages
             textBox.IsReadOnly = false;
             ApplyTextBoxChrome(textBox, isSelected: true);
             SyncPopupToSelectedTextBox();
-            _textBoxPopup.PlacementTarget = textBox;
+            _textBoxPopup.PlacementTarget = textBox.Parent as UIElement ?? textBox;
             _textBoxPopup.IsOpen = true;
+            textBox.Focus();
         }
 
         private void DeselectTextBox()
@@ -546,11 +663,11 @@ namespace WindowsNotesApp.Pages
 
             var dragHandle = new Border
             {
-                Background = new SolidColorBrush(Color.FromRgb(240, 240, 240)),
-                BorderBrush = Brushes.LightGray,
+                Background = new SolidColorBrush(Color.FromRgb(230, 230, 230)),
+                BorderBrush = new SolidColorBrush(Color.FromRgb(180, 180, 180)),
                 BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(4, 4, 0, 0),
-                Height = 24,
+                CornerRadius = new CornerRadius(6, 6, 0, 0),
+                Height = 26,
                 Visibility = select ? Visibility.Visible : Visibility.Collapsed,
                 Cursor = Cursors.SizeAll
             };
@@ -560,7 +677,7 @@ namespace WindowsNotesApp.Pages
                 Text = "\uE7C2",
                 FontFamily = new FontFamily("Segoe MDL2 Assets"),
                 FontSize = 12,
-                Foreground = Brushes.Gray,
+                Foreground = new SolidColorBrush(Color.FromRgb(80, 80, 80)),
                 HorizontalAlignment = HorizontalAlignment.Center,
                 VerticalAlignment = VerticalAlignment.Center
             };
@@ -571,14 +688,15 @@ namespace WindowsNotesApp.Pages
                 Text = text ?? "Text",
                 AcceptsReturn = true,
                 TextWrapping = TextWrapping.Wrap,
-                MinWidth = 100,
-                MinHeight = 30,
+                MinWidth = 120,
+                MinHeight = 36,
                 BorderThickness = new Thickness(select ? 1 : 0),
-                BorderBrush = select ? Brushes.DodgerBlue : Brushes.Transparent,
+                BorderBrush = select ? new SolidColorBrush(Color.FromRgb(0, 120, 212)) : Brushes.Transparent,
                 Background = Brushes.Transparent,
                 FontSize = fontSize ?? _currentFontSize,
                 Foreground = new SolidColorBrush(color ?? _textColor),
-                IsReadOnly = !select
+                IsReadOnly = !select,
+                Padding = new Thickness(8, 6, 8, 6)
             };
 
             Grid.SetRow(dragHandle, 0);
@@ -589,12 +707,20 @@ namespace WindowsNotesApp.Pages
 
             Canvas.SetLeft(container, position.X);
             Canvas.SetTop(container, position.Y);
+            Panel.SetZIndex(container, 1000);
 
             dragHandle.MouseLeftButtonDown += DragHandle_MouseLeftButtonDown;
             dragHandle.MouseMove += DragHandle_MouseMove;
             dragHandle.MouseLeftButtonUp += DragHandle_MouseLeftButtonUp;
 
             textBox.TextChanged += (s, e) => MarkDirty();
+            textBox.PreviewMouseLeftButtonDown += (s, e) =>
+            {
+                if (_currentTool == ToolType.Text)
+                {
+                    SelectTextBox((TextBox)s);
+                }
+            };
             textBox.GotFocus += (s, e) =>
             {
                 if (_currentTool == ToolType.Text)
@@ -607,6 +733,7 @@ namespace WindowsNotesApp.Pages
             {
                 SelectTextBox(textBox);
                 textBox.SelectAll();
+                textBox.Focus();
                 MarkDirty();
             }
         }
@@ -684,8 +811,9 @@ namespace WindowsNotesApp.Pages
                     MarkDirty();
                 if (wasDragging && _draggedContainer.Children.Count > 1 && _draggedContainer.Children[1] is TextBox tb)
                 {
-                    _textBoxPopup.PlacementTarget = tb;
+                    _textBoxPopup.PlacementTarget = _draggedContainer;
                     _textBoxPopup.IsOpen = true;
+                    tb.Focus();
                 }
             }
             _draggedContainer = null;
@@ -881,6 +1009,24 @@ namespace WindowsNotesApp.Pages
                 }
                 return image;
             });
+        }
+
+        private static Color HsvToColor(double h, double s, double v)
+        {
+            double c = v * s;
+            double x = c * (1 - Math.Abs((h / 60) % 2 - 1));
+            double m = v - c;
+            double r, g, b;
+            if (h < 60) { r = c; g = x; b = 0; }
+            else if (h < 120) { r = x; g = c; b = 0; }
+            else if (h < 180) { r = 0; g = c; b = x; }
+            else if (h < 240) { r = 0; g = x; b = c; }
+            else if (h < 300) { r = x; g = 0; b = c; }
+            else { r = c; g = 0; b = x; }
+            return Color.FromRgb(
+                (byte)((r + m) * 255),
+                (byte)((g + m) * 255),
+                (byte)((b + m) * 255));
         }
     }
 }

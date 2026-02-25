@@ -15,5 +15,17 @@
 
         <!-- Text/Widget Layer -->
         <Canvas x:Name="TextOverlayCanvas" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" Background="Transparent"/>
+
+        <!-- Eraser Indicator (on its own Canvas so SetLeft/SetTop works) -->
+        <Canvas x:Name="EraserCanvas" IsHitTestVisible="False">
+            <Ellipse x:Name="EraserIndicator"
+                     Width="20"
+                     Height="20"
+                     Stroke="#0078D4"
+                     StrokeThickness="2"
+                     Fill="#100078D4"
+                     Visibility="Collapsed"
+                     IsHitTestVisible="False"/>
+        </Canvas>
     </Grid>
 </UserControl>

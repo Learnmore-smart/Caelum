@@ -2,7 +2,7 @@
     x:Class="WindowsNotesApp.MainWindow"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-    Title="Windows Notes App"
+    Title="Noteastic"
     Height="720" Width="1280"
     WindowStartupLocation="CenterScreen"
     AllowsTransparency="True"
@@ -11,69 +11,156 @@
     Background="Transparent">
 
     <Window.Resources>
+        <Style x:Key="NavButtonStyle" TargetType="Button">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Width" Value="32"/>
+            <Setter Property="Height" Value="28"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Root" Background="{TemplateBinding Background}" CornerRadius="6" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Root" Property="Background" Value="#12000000"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.3"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <Style x:Key="TitleBarButtonStyle" TargetType="Button">
             <Setter Property="Background" Value="Transparent"/>
             <Setter Property="BorderThickness" Value="0"/>
             <Setter Property="Width" Value="46"/>
             <Setter Property="Height" Value="32"/>
+            <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
-                        <Border Background="{TemplateBinding Background}">
+                        <Border x:Name="Root" Background="{TemplateBinding Background}" Padding="{TemplateBinding Padding}">
                             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                         </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Root" Property="Background" Value="#10CCCCCC"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
-            <Style.Triggers>
-                <Trigger Property="IsMouseOver" Value="True">
-                    <Setter Property="Background" Value="#10CCCCCC"/>
-                </Trigger>
-            </Style.Triggers>
         </Style>
-        
+
         <Style x:Key="CloseButtonStyle" TargetType="Button" BasedOn="{StaticResource TitleBarButtonStyle}">
-            <Style.Triggers>
-                <Trigger Property="IsMouseOver" Value="True">
-                    <Setter Property="Background" Value="#E81123"/>
-                    <Setter Property="Foreground" Value="White"/>
-                </Trigger>
-            </Style.Triggers>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Root" Background="{TemplateBinding Background}" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Root" Property="Background" Value="#E81123"/>
+                                <Setter Property="Foreground" Value="White"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="ToolbarTextButtonStyle" TargetType="Button">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Height" Value="28"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Padding" Value="8,4"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Root" Background="{TemplateBinding Background}" CornerRadius="6" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Root" Property="Background" Value="#12000000"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
         </Style>
     </Window.Resources>
 
-    <Border CornerRadius="8" Background="#F8F8F8" Margin="8">
-        <Border.Effect>
-            <DropShadowEffect Color="Black" Opacity="0.15" BlurRadius="16" ShadowDepth="0"/>
-        </Border.Effect>
-        
+    <Border CornerRadius="12" Background="#F5F5F5" Margin="8"
+            BorderBrush="#20000000" BorderThickness="1">
         <Grid>
             <Grid.RowDefinitions>
-                <RowDefinition Height="32"/>
+                <RowDefinition Height="40"/>
                 <RowDefinition Height="*"/>
             </Grid.RowDefinitions>
 
             <!-- Title Bar -->
-            <Border Grid.Row="0" Background="#F0F0F0" CornerRadius="8,8,0,0" MouseLeftButtonDown="TitleBar_MouseLeftButtonDown">
+            <Border Grid.Row="0" Background="Transparent" CornerRadius="12,12,0,0" MouseLeftButtonDown="TitleBar_MouseLeftButtonDown">
                 <Grid>
-                    <TextBlock Text="Windows Notes App" FontSize="12" Foreground="#666666" Margin="16,0" VerticalAlignment="Center" FontWeight="Medium"/>
+                    <!-- Left: App name + Navigation -->
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                        <TextBlock Text="Noteastic" FontSize="13" Foreground="#444444" Margin="16,0,12,0" VerticalAlignment="Center" FontWeight="SemiBold"/>
+                        <Button x:Name="NavBackButton" Click="NavBack_Click" Style="{StaticResource NavButtonStyle}" IsEnabled="False">
+                            <TextBlock Text="&#xE72B;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#555555"/>
+                        </Button>
+                        <Button x:Name="NavForwardButton" Click="NavForward_Click" Style="{StaticResource NavButtonStyle}" IsEnabled="False" Margin="2,0,0,0">
+                            <TextBlock Text="&#xE72A;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#555555"/>
+                        </Button>
+                        <Button x:Name="NavHomeButton" Click="NavHome_Click" Style="{StaticResource NavButtonStyle}" Margin="2,0,0,0">
+                            <TextBlock Text="&#xE80F;" FontFamily="Segoe MDL2 Assets" FontSize="14" Foreground="#555555"/>
+                        </Button>
+                    </StackPanel>
+
+                    <!-- Right: Toolbar items + Window buttons -->
                     <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                        <Button Style="{StaticResource ToolbarTextButtonStyle}" Margin="0,0,2,0">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="&#xE721;" FontFamily="Segoe MDL2 Assets" FontSize="13" Foreground="#555555" VerticalAlignment="Center"/>
+                                <TextBlock Text="搜索" FontSize="12" Foreground="#555555" Margin="5,0,0,0" VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </Button>
+                        <Button Style="{StaticResource ToolbarTextButtonStyle}" Margin="0,0,2,0">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="&#xE762;" FontFamily="Segoe MDL2 Assets" FontSize="13" Foreground="#555555" VerticalAlignment="Center"/>
+                                <TextBlock Text="选择" FontSize="12" Foreground="#555555" Margin="5,0,0,0" VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </Button>
+                        <Button Style="{StaticResource NavButtonStyle}" Margin="0,0,2,0">
+                            <TextBlock Text="&#xE8CB;" FontFamily="Segoe MDL2 Assets" FontSize="14" Foreground="#555555"/>
+                        </Button>
+                        <Button Style="{StaticResource NavButtonStyle}" Margin="0,0,8,0">
+                            <TextBlock Text="&#xE712;" FontFamily="Segoe MDL2 Assets" FontSize="14" Foreground="#555555"/>
+                        </Button>
+                        <Border Width="1" Background="#20000000" Margin="0,6"/>
                         <Button x:Name="MinimizeButton" Click="MinimizeButton_Click" Style="{StaticResource TitleBarButtonStyle}">
-                            <TextBlock Text="&#xE921;" FontFamily="Segoe MDL2 Assets" FontSize="10" Foreground="#666666"/>
+                            <TextBlock Text="&#xE921;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#666666"/>
                         </Button>
                         <Button x:Name="MaximizeButton" Click="MaximizeButton_Click" Style="{StaticResource TitleBarButtonStyle}">
-                            <TextBlock Text="&#xE922;" FontFamily="Segoe MDL2 Assets" FontSize="10" Foreground="#666666"/>
+                            <TextBlock Text="&#xE922;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#666666"/>
                         </Button>
                         <Button x:Name="CloseButton" Click="CloseButton_Click" Style="{StaticResource CloseButtonStyle}">
-                            <TextBlock Text="&#xE8BB;" FontFamily="Segoe MDL2 Assets" FontSize="10" Foreground="#666666"/>
+                            <TextBlock Text="&#xE8BB;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#666666"/>
                         </Button>
                     </StackPanel>
                 </Grid>
             </Border>
 
             <!-- Content Area -->
-            <Border Grid.Row="1" Background="#FFFFFF">
-                <Frame x:Name="RootFrame" NavigationUIVisibility="Hidden"/>
+            <Border Grid.Row="1" Background="Transparent">
+                <Frame x:Name="RootFrame" NavigationUIVisibility="Hidden" Navigated="RootFrame_Navigated"/>
             </Border>
         </Grid>
     </Border>

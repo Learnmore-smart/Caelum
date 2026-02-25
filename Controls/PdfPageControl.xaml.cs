@@ -6,7 +6,6 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
-using System.Windows.Media.Imaging;
 using System.Windows.Ink;
 using WindowsNotesApp.Models;
 
@@ -90,6 +89,8 @@ namespace WindowsNotesApp.Controls
             InkCanvas.StylusDown += InkCanvas_StylusDown;
             InkCanvas.StylusMove += InkCanvas_StylusMove;
             InkCanvas.StylusUp += InkCanvas_StylusUp;
+            InkCanvas.MouseEnter += InkCanvas_MouseEnter;
+            InkCanvas.MouseLeave += InkCanvas_MouseLeave;
         }
 
         private void PdfPageControl_Unloaded(object sender, RoutedEventArgs e)
@@ -101,11 +102,31 @@ namespace WindowsNotesApp.Controls
             InkCanvas.StylusDown -= InkCanvas_StylusDown;
             InkCanvas.StylusMove -= InkCanvas_StylusMove;
             InkCanvas.StylusUp -= InkCanvas_StylusUp;
+            InkCanvas.MouseEnter -= InkCanvas_MouseEnter;
+            InkCanvas.MouseLeave -= InkCanvas_MouseLeave;
+        }
+
+        private void InkCanvas_MouseEnter(object sender, MouseEventArgs e)
+        {
+            if (_currentMode == CustomInkInputProcessingMode.Erasing)
+            {
+                EraserIndicator.Visibility = Visibility.Visible;
+                Cursor = Cursors.None;
+                UpdateEraserIndicatorPosition(e.GetPosition(PageGrid));
+            }
+        }
+
+        private void InkCanvas_MouseLeave(object sender, MouseEventArgs e)
+        {
+            EraserIndicator.Visibility = Visibility.Collapsed;
+            Cursor = Cursors.Arrow;
         }
 
         private void TextOverlayCanvas_MouseDown(object sender, MouseButtonEventArgs e)
         {
-            TextOverlayPointerPressed?.Invoke(this, e);
+            // Only forward clicks directly on the canvas background, not on child elements like TextBoxes
+            if (e.OriginalSource == TextOverlayCanvas)
+                TextOverlayPointerPressed?.Invoke(this, e);
         }
 
         private void InkCanvas_MouseDown(object sender, MouseButtonEventArgs e)
@@ -146,11 +167,25 @@ namespace WindowsNotesApp.Controls
 
         private void InkCanvas_MouseMove(object sender, MouseEventArgs e)
         {
-            if (_currentMode == CustomInkInputProcessingMode.Erasing && e.LeftButton == MouseButtonState.Pressed)
+            if (_currentMode == CustomInkInputProcessingMode.Erasing)
             {
-                var point = e.GetPosition(InkCanvas);
-                EraseStrokesAtPoint(point);
+                var point = e.GetPosition(PageGrid);
+                UpdateEraserIndicatorPosition(point);
+
+                if (e.LeftButton == MouseButtonState.Pressed)
+                {
+                    EraseStrokesAtPoint(e.GetPosition(InkCanvas));
+                }
             }
+        }
+
+        private void UpdateEraserIndicatorPosition(Point point)
+        {
+            EraserIndicator.Width = _eraserSize;
+            EraserIndicator.Height = _eraserSize;
+            Canvas.SetLeft(EraserIndicator, point.X - _eraserSize / 2);
+            Canvas.SetTop(EraserIndicator, point.Y - _eraserSize / 2);
+            EraserIndicator.Visibility = Visibility.Visible;
         }
 
         private void InkCanvas_MouseUp(object sender, MouseButtonEventArgs e)
@@ -271,12 +306,19 @@ namespace WindowsNotesApp.Controls
             {
                 case CustomInkInputProcessingMode.Inking:
                     InkCanvas.EditingMode = InkCanvasEditingMode.Ink;
+                    EraserIndicator.Visibility = Visibility.Collapsed;
+                    InkCanvas.Cursor = Cursors.Cross;
+                    Cursor = Cursors.Arrow;
                     break;
                 case CustomInkInputProcessingMode.Erasing:
                     InkCanvas.EditingMode = InkCanvasEditingMode.None;
+                    InkCanvas.Cursor = Cursors.None;
                     break;
                 case CustomInkInputProcessingMode.None:
                     InkCanvas.EditingMode = InkCanvasEditingMode.None;
+                    EraserIndicator.Visibility = Visibility.Collapsed;
+                    InkCanvas.Cursor = Cursors.Arrow;
+                    Cursor = Cursors.Arrow;
                     break;
             }
         }

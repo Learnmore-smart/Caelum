@@ -4,23 +4,24 @@
       Background="Transparent">
 
     <Page.Resources>
+        <!-- Toolbar button -->
         <Style x:Key="ToolbarButtonStyle" TargetType="Button">
             <Setter Property="Background" Value="Transparent"/>
             <Setter Property="BorderThickness" Value="0"/>
-            <Setter Property="Padding" Value="12,8"/>
+            <Setter Property="Padding" Value="10,8"/>
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
-                        <Border x:Name="Root" Background="{TemplateBinding Background}" CornerRadius="4" Padding="{TemplateBinding Padding}">
+                        <Border x:Name="Root" Background="{TemplateBinding Background}" CornerRadius="8" Padding="{TemplateBinding Padding}">
                             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Root" Property="Background" Value="#15000000"/>
+                                <Setter TargetName="Root" Property="Background" Value="#14000000"/>
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="Root" Property="Background" Value="#25000000"/>
+                                <Setter TargetName="Root" Property="Background" Value="#22000000"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -28,52 +29,32 @@
             </Setter>
         </Style>
 
+        <!-- Toolbar toggle button -->
         <Style x:Key="ToolbarToggleButtonStyle" TargetType="ToggleButton">
             <Setter Property="Background" Value="Transparent"/>
             <Setter Property="BorderThickness" Value="0"/>
-            <Setter Property="Padding" Value="12,8"/>
+            <Setter Property="Padding" Value="10,8"/>
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="ToggleButton">
-                        <Border x:Name="Root" Background="{TemplateBinding Background}" CornerRadius="4" Padding="{TemplateBinding Padding}">
+                        <Border x:Name="Root" Background="{TemplateBinding Background}" CornerRadius="8" Padding="{TemplateBinding Padding}">
                             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Root" Property="Background" Value="#15000000"/>
+                                <Setter TargetName="Root" Property="Background" Value="#14000000"/>
                             </Trigger>
                             <Trigger Property="IsChecked" Value="True">
-                                <Setter TargetName="Root" Property="Background" Value="#200078D4"/>
+                                <Setter TargetName="Root" Property="Background" Value="#220078D4"/>
                             </Trigger>
                             <MultiTrigger>
                                 <MultiTrigger.Conditions>
                                     <Condition Property="IsMouseOver" Value="True"/>
                                     <Condition Property="IsChecked" Value="True"/>
                                 </MultiTrigger.Conditions>
-                                <Setter TargetName="Root" Property="Background" Value="#300078D4"/>
+                                <Setter TargetName="Root" Property="Background" Value="#340078D4"/>
                             </MultiTrigger>
-                        </ControlTemplate.Triggers>
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
-        </Style>
-
-        <Style x:Key="ActiveToolbarToggleButtonStyle" TargetType="ToggleButton">
-            <Setter Property="Background" Value="#200078D4"/>
-            <Setter Property="BorderThickness" Value="0"/>
-            <Setter Property="Padding" Value="12,8"/>
-            <Setter Property="Cursor" Value="Hand"/>
-            <Setter Property="Template">
-                <Setter.Value>
-                    <ControlTemplate TargetType="ToggleButton">
-                        <Border x:Name="Root" Background="{TemplateBinding Background}" CornerRadius="4" Padding="{TemplateBinding Padding}">
-                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                        </Border>
-                        <ControlTemplate.Triggers>
-                            <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Root" Property="Background" Value="#300078D4"/>
-                            </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
@@ -87,73 +68,84 @@
             <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
 
-        <!-- Toolbar -->
-        <Border Grid.Row="0"
-                Background="#CCFFFFFF"
-                BorderBrush="#30E0E0E0"
-                BorderThickness="0,0,0,1"
-                Padding="8,4,8,4"
-                CornerRadius="0,0,8,8">
-            <Grid Height="40">
+        <!-- Toolbar - frosted glass -->
+        <Border Grid.Row="0" Padding="8,6" CornerRadius="0,0,12,12">
+            <Border.Background>
+                <SolidColorBrush Color="White" Opacity="0.78"/>
+            </Border.Background>
+            <Border.Effect>
+                <DropShadowEffect BlurRadius="10" ShadowDepth="2" Opacity="0.06" Color="#000"/>
+            </Border.Effect>
+            <Grid Height="42">
                 <!-- Back button -->
                 <Button x:Name="BackButton" Click="Back_Click"
                         Style="{StaticResource ToolbarButtonStyle}"
                         HorizontalAlignment="Left">
-                    <TextBlock Text="&#xE72B;" FontFamily="Segoe MDL2 Assets" FontSize="16" Foreground="#333333"/>
+                    <TextBlock Text="&#xE72B;" FontFamily="Segoe MDL2 Assets" FontSize="18" Foreground="#444"/>
                 </Button>
 
-                <!-- Tool buttons -->
+                <!-- Centered tool buttons -->
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                    <!-- Pen -->
                     <ToggleButton x:Name="PenToolButton" Click="PenToolButton_Click"
                                   Style="{StaticResource ToolbarToggleButtonStyle}"
-                                  Width="44" Height="36" Margin="2,0">
-                        <TextBlock x:Name="PenIcon" Text="&#xE70F;" FontFamily="Segoe MDL2 Assets" FontSize="16" Foreground="#333333"/>
+                                  Width="44" Height="38" Margin="3,0">
+                        <TextBlock x:Name="PenIcon" Text="&#xED63;" FontFamily="Segoe MDL2 Assets" FontSize="20" Foreground="#333"/>
                     </ToggleButton>
-                    <Border x:Name="PenActiveIndicator" Width="3" Height="3" Background="#0078D4" CornerRadius="1.5" Visibility="Collapsed" Margin="0,-28,0,0"/>
 
+                    <!-- Highlighter (uses Segoe MDL2 marker icon) -->
                     <ToggleButton x:Name="HighlighterToolButton" Click="HighlighterToolButton_Click"
                                   Style="{StaticResource ToolbarToggleButtonStyle}"
-                                  Width="44" Height="36" Margin="2,0">
-                        <TextBlock x:Name="HighlighterIcon" Text="&#xE7F4;" FontFamily="Segoe MDL2 Assets" FontSize="16" Foreground="#FFD700"/>
+                                  Width="44" Height="38" Margin="3,0">
+                        <TextBlock x:Name="HighlighterIcon" Text="&#xE7E6;" FontFamily="Segoe MDL2 Assets" FontSize="20" Foreground="#F59E0B"/>
                     </ToggleButton>
-                    <Border x:Name="HighlighterActiveIndicator" Width="3" Height="3" Background="#0078D4" CornerRadius="1.5" Visibility="Collapsed" Margin="0,-28,0,0"/>
 
+                    <!-- Eraser -->
                     <ToggleButton x:Name="EraserToolButton" Click="EraserToolButton_Click"
                                   Style="{StaticResource ToolbarToggleButtonStyle}"
-                                  Width="44" Height="36" Margin="2,0">
-                        <TextBlock x:Name="EraserIcon" Text="&#xE75C;" FontFamily="Segoe MDL2 Assets" FontSize="16" Foreground="#333333"/>
+                                  Width="44" Height="38" Margin="3,0">
+                        <TextBlock x:Name="EraserIcon" Text="&#xE75C;" FontFamily="Segoe MDL2 Assets" FontSize="20" Foreground="#555"/>
                     </ToggleButton>
-                    <Border x:Name="EraserActiveIndicator" Width="3" Height="3" Background="#0078D4" CornerRadius="1.5" Visibility="Collapsed" Margin="0,-28,0,0"/>
 
+                    <!-- Separator -->
+                    <Border Width="1" Background="#18000000" Margin="6,8"/>
+
+                    <!-- Text -->
                     <ToggleButton x:Name="TextToolButton" Click="TextToolButton_Click"
                                   Style="{StaticResource ToolbarToggleButtonStyle}"
-                                  Width="44" Height="36" Margin="2,0">
-                        <TextBlock Text="&#xE8D2;" FontFamily="Segoe MDL2 Assets" FontSize="16" Foreground="#333333"/>
+                                  Width="44" Height="38" Margin="3,0">
+                        <TextBlock Text="A" FontSize="18" FontWeight="Bold" Foreground="#555"/>
                     </ToggleButton>
-                    <Border x:Name="TextActiveIndicator" Width="3" Height="3" Background="#0078D4" CornerRadius="1.5" Visibility="Collapsed" Margin="0,-28,0,0"/>
                 </StackPanel>
 
                 <!-- Save button -->
                 <Button x:Name="SavePdfButton" Click="SavePdf_Click"
                         Style="{StaticResource ToolbarButtonStyle}"
                         HorizontalAlignment="Right">
-                    <TextBlock Text="&#xE74E;" FontFamily="Segoe MDL2 Assets" FontSize="16" Foreground="#333333"/>
+                    <TextBlock Text="&#xE74E;" FontFamily="Segoe MDL2 Assets" FontSize="18" Foreground="#444"/>
                 </Button>
             </Grid>
         </Border>
 
         <!-- PDF Pages Container -->
         <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
-                      Background="#F8F8F8">
-            <StackPanel x:Name="PagesContainer" Margin="24,16,24,24"/>
+                      Background="#EAEAEA"
+                      Style="{StaticResource SleekScrollViewer}">
+            <StackPanel x:Name="PagesContainer" Margin="32,20,32,32"/>
         </ScrollViewer>
 
         <!-- Loading Overlay -->
         <Grid x:Name="LoadingOverlay" Grid.RowSpan="2"
-              Background="#80000000" Visibility="Collapsed">
-            <Border Background="#E0FFFFFF" CornerRadius="12" Padding="24" HorizontalAlignment="Center" VerticalAlignment="Center">
+              Background="#60000000" Visibility="Collapsed">
+            <Border CornerRadius="14" Padding="28,20" HorizontalAlignment="Center" VerticalAlignment="Center">
+                <Border.Background>
+                    <SolidColorBrush Color="White" Opacity="0.92"/>
+                </Border.Background>
+                <Border.Effect>
+                    <DropShadowEffect BlurRadius="20" ShadowDepth="4" Opacity="0.10" Color="#000"/>
+                </Border.Effect>
                 <StackPanel Orientation="Horizontal">
-                    <TextBlock x:Name="LoadingRing" Text="&#xE712;" FontFamily="Segoe MDL2 Assets" FontSize="24" Foreground="#0078D4" RenderTransformOrigin="0.5,0.5" Margin="0,0,12,0">
+                    <TextBlock x:Name="LoadingRing" Text="&#xE712;" FontFamily="Segoe MDL2 Assets" FontSize="22" Foreground="#0078D4" RenderTransformOrigin="0.5,0.5" Margin="0,0,12,0">
                         <TextBlock.RenderTransform>
                             <RotateTransform x:Name="LoadingRotate" Angle="0"/>
                         </TextBlock.RenderTransform>
@@ -173,7 +165,7 @@
                             </Style>
                         </TextBlock.Style>
                     </TextBlock>
-                    <TextBlock x:Name="LoadingText" Text="Loading Document..." FontSize="16" VerticalAlignment="Center" Foreground="#333333"/>
+                    <TextBlock x:Name="LoadingText" Text="加载中…" FontSize="15" VerticalAlignment="Center" Foreground="#444"/>
                 </StackPanel>
             </Border>
         </Grid>

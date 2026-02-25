@@ -4,23 +4,22 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
     <Application.Resources>
         <ResourceDictionary>
-            <Style x:Key="ToolbarButtonStyle" TargetType="Button">
-                <Setter Property="Background" Value="Transparent"/>
-                <Setter Property="BorderThickness" Value="0"/>
-                <Setter Property="Padding" Value="12,8"/>
-                <Setter Property="Cursor" Value="Hand"/>
+            <!-- ═══════════════════ Sleek ScrollBar ═══════════════════ -->
+            <Style x:Key="SleekScrollBarThumb" TargetType="Thumb">
+                <Setter Property="OverridesDefaultStyle" Value="True"/>
+                <Setter Property="IsTabStop" Value="False"/>
                 <Setter Property="Template">
                     <Setter.Value>
-                        <ControlTemplate TargetType="Button">
-                            <Border x:Name="Root" Background="{TemplateBinding Background}" CornerRadius="4" Padding="{TemplateBinding Padding}">
-                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                            </Border>
+                        <ControlTemplate TargetType="Thumb">
+                            <Border x:Name="ThumbBorder" Background="#30888888" CornerRadius="2.5" MinHeight="30"/>
                             <ControlTemplate.Triggers>
                                 <Trigger Property="IsMouseOver" Value="True">
-                                    <Setter TargetName="Root" Property="Background" Value="#15000000"/>
+                                    <Setter TargetName="ThumbBorder" Property="Background" Value="#55666666"/>
+                                    <Setter TargetName="ThumbBorder" Property="CornerRadius" Value="4"/>
                                 </Trigger>
-                                <Trigger Property="IsPressed" Value="True">
-                                    <Setter TargetName="Root" Property="Background" Value="#25000000"/>
+                                <Trigger Property="IsDragging" Value="True">
+                                    <Setter TargetName="ThumbBorder" Property="Background" Value="#70555555"/>
+                                    <Setter TargetName="ThumbBorder" Property="CornerRadius" Value="4"/>
                                 </Trigger>
                             </ControlTemplate.Triggers>
                         </ControlTemplate>
@@ -28,54 +27,76 @@
                 </Setter>
             </Style>
 
-            <Style x:Key="ToolbarToggleButtonStyle" TargetType="ToggleButton">
-                <Setter Property="Background" Value="Transparent"/>
-                <Setter Property="BorderThickness" Value="0"/>
-                <Setter Property="Padding" Value="12,8"/>
-                <Setter Property="Cursor" Value="Hand"/>
+            <Style x:Key="SleekVerticalScrollBar" TargetType="ScrollBar">
+                <Setter Property="OverridesDefaultStyle" Value="True"/>
+                <Setter Property="Width" Value="5"/>
+                <Setter Property="MinWidth" Value="5"/>
+                <Setter Property="Margin" Value="0,6,3,6"/>
                 <Setter Property="Template">
                     <Setter.Value>
-                        <ControlTemplate TargetType="ToggleButton">
-                            <Border x:Name="Root" Background="{TemplateBinding Background}" CornerRadius="4" Padding="{TemplateBinding Padding}">
-                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        <ControlTemplate TargetType="ScrollBar">
+                            <Border Background="Transparent" CornerRadius="2.5">
+                                <Track x:Name="PART_Track" IsDirectionReversed="True">
+                                    <Track.Thumb>
+                                        <Thumb Style="{StaticResource SleekScrollBarThumb}"/>
+                                    </Track.Thumb>
+                                </Track>
                             </Border>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+                <Style.Triggers>
+                    <Trigger Property="IsMouseOver" Value="True">
+                        <Setter Property="Width" Value="8"/>
+                    </Trigger>
+                </Style.Triggers>
+            </Style>
+
+            <Style x:Key="SleekScrollViewer" TargetType="ScrollViewer">
+                <Setter Property="OverridesDefaultStyle" Value="True"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="ScrollViewer">
+                            <Grid>
+                                <ScrollContentPresenter Margin="{TemplateBinding Padding}"
+                                                        CanContentScroll="{TemplateBinding CanContentScroll}"/>
+                                <ScrollBar x:Name="PART_VerticalScrollBar"
+                                           HorizontalAlignment="Right"
+                                           Orientation="Vertical"
+                                           Style="{StaticResource SleekVerticalScrollBar}"
+                                           Maximum="{TemplateBinding ScrollableHeight}"
+                                           Value="{TemplateBinding VerticalOffset}"
+                                           ViewportSize="{TemplateBinding ViewportHeight}"
+                                           Visibility="{TemplateBinding ComputedVerticalScrollBarVisibility}"
+                                           Opacity="0.15"/>
+                            </Grid>
                             <ControlTemplate.Triggers>
                                 <Trigger Property="IsMouseOver" Value="True">
-                                    <Setter TargetName="Root" Property="Background" Value="#15000000"/>
+                                    <Setter TargetName="PART_VerticalScrollBar" Property="Opacity" Value="1"/>
                                 </Trigger>
-                                <Trigger Property="IsChecked" Value="True">
-                                    <Setter TargetName="Root" Property="Background" Value="#200078D4"/>
-                                </Trigger>
-                                <MultiTrigger>
-                                    <MultiTrigger.Conditions>
-                                        <Condition Property="IsMouseOver" Value="True"/>
-                                        <Condition Property="IsChecked" Value="True"/>
-                                    </MultiTrigger.Conditions>
-                                    <Setter TargetName="Root" Property="Background" Value="#300078D4"/>
-                                </MultiTrigger>
                             </ControlTemplate.Triggers>
                         </ControlTemplate>
                     </Setter.Value>
                 </Setter>
             </Style>
 
-            <Style x:Key="ActiveToolbarToggleButtonStyle" TargetType="ToggleButton">
-                <Setter Property="Background" Value="#200078D4"/>
-                <Setter Property="BorderThickness" Value="0"/>
-                <Setter Property="Padding" Value="12,8"/>
-                <Setter Property="Cursor" Value="Hand"/>
-                <Setter Property="Template">
+            <!-- ═══════════════════ Glass Popup Border ═══════════════════ -->
+            <Style x:Key="GlassPopupBorder" TargetType="Border">
+                <Setter Property="Background">
                     <Setter.Value>
-                        <ControlTemplate TargetType="ToggleButton">
-                            <Border x:Name="Root" Background="{TemplateBinding Background}" CornerRadius="4" Padding="{TemplateBinding Padding}">
-                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                            </Border>
-                            <ControlTemplate.Triggers>
-                                <Trigger Property="IsMouseOver" Value="True">
-                                    <Setter TargetName="Root" Property="Background" Value="#300078D4"/>
-                                </Trigger>
-                            </ControlTemplate.Triggers>
-                        </ControlTemplate>
+                        <SolidColorBrush Color="White" Opacity="0.92"/>
+                    </Setter.Value>
+                </Setter>
+                <Setter Property="BorderBrush">
+                    <Setter.Value>
+                        <SolidColorBrush Color="White" Opacity="0.45"/>
+                    </Setter.Value>
+                </Setter>
+                <Setter Property="BorderThickness" Value="1"/>
+                <Setter Property="CornerRadius" Value="14"/>
+                <Setter Property="Effect">
+                    <Setter.Value>
+                        <DropShadowEffect BlurRadius="24" ShadowDepth="6" Opacity="0.14" Color="#333"/>
                     </Setter.Value>
                 </Setter>
             </Style>

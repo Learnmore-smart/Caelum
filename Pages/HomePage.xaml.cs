@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
@@ -46,6 +47,18 @@ namespace WindowsNotesApp.Pages
 
                 await LoadRecentFilesAsync();
                 _recentFilesLoaded = true;
+
+                // Load page counts in background
+                _ = Task.Run(() =>
+                {
+                    foreach (var tile in HomeTiles)
+                    {
+                        if (!tile.IsAddTile)
+                        {
+                            tile.LoadPageCountAsync();
+                        }
+                    }
+                });
             }
             finally
             {
@@ -171,6 +184,22 @@ namespace WindowsNotesApp.Pages
             if (sender is Button button && button.Tag is HomeTile tile)
             {
                 _ = OpenRecentTileAsync(tile);
+            }
+        }
+
+        private void TileMenu_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is Button button && button.Tag is HomeTile tile)
+            {
+                var menu = new ContextMenu();
+                var removeItem = new MenuItem { Header = "从列表中移除" };
+                removeItem.Click += async (s, ev) =>
+                {
+                    await RemoveMissingRecentTileAsync(tile);
+                };
+                menu.Items.Add(removeItem);
+                menu.PlacementTarget = button;
+                menu.IsOpen = true;
             }
         }
 
@@ -309,11 +338,25 @@ namespace WindowsNotesApp.Pages
         }
     }
 
-    public sealed class HomeTile
+    public sealed class HomeTile : INotifyPropertyChanged
     {
         public bool IsAddTile { get; private set; }
 
         public string Path { get; private set; }
+
+        private int _pageCount;
+        public int PageCount
+        {
+            get => _pageCount;
+            set { _pageCount = value; OnPropertyChanged(nameof(PageCount)); OnPropertyChanged(nameof(InfoText)); }
+        }
+
+        private DateTime _lastModified;
+        public DateTime LastModified
+        {
+            get => _lastModified;
+            set { _lastModified = value; OnPropertyChanged(nameof(LastModified)); OnPropertyChanged(nameof(InfoText)); }
+        }
 
         public string FileName
         {
@@ -328,6 +371,21 @@ namespace WindowsNotesApp.Pages
             }
         }
 
+        public string InfoText
+        {
+            get
+            {
+                if (IsAddTile || string.IsNullOrWhiteSpace(Path)) return string.Empty;
+                var parts = new List<string>();
+                if (PageCount > 0) parts.Add($"{PageCount} 页面");
+                if (LastModified != default) parts.Add(LastModified.ToString("yyyy/M/d"));
+                return string.Join(" · ", parts);
+            }
+        }
+
+        public event PropertyChangedEventHandler PropertyChanged;
+        private void OnPropertyChanged(string name) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
+
         public static HomeTile CreateAddTile()
         {
             return new HomeTile { IsAddTile = true, Path = string.Empty };
@@ -335,7 +393,29 @@ namespace WindowsNotesApp.Pages
 
         public static HomeTile CreateFileTile(string path)
         {
-            return new HomeTile { IsAddTile = false, Path = path ?? string.Empty };
+            var tile = new HomeTile { IsAddTile = false, Path = path ?? string.Empty };
+            try
+            {
+                if (System.IO.File.Exists(path))
+                {
+                    var fi = new System.IO.FileInfo(path);
+                    tile._lastModified = fi.LastWriteTime;
+                }
+            }
+            catch { }
+            return tile;
+        }
+
+        public void LoadPageCountAsync()
+        {
+            if (IsAddTile || string.IsNullOrWhiteSpace(Path)) return;
+            try
+            {
+                if (!System.IO.File.Exists(Path)) return;
+                using var doc = PdfiumViewer.PdfDocument.Load(Path);
+                PageCount = doc.PageCount;
+            }
+            catch { }
         }
     }
 }
