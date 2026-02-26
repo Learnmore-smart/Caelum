@@ -31,12 +31,13 @@ namespace WindowsNotesApp.Controls
         public event EventHandler<MouseButtonEventArgs> TextOverlayPointerPressed;
         public event EventHandler<MouseButtonEventArgs> BackgroundPointerPressed;
         public event EventHandler InkMutated;
+        public event EventHandler<Stroke> StrokeCollectedUndoable;
+        public event EventHandler<CustomInkInputProcessingMode> ModeChanged;
 
         private DrawingAttributes _drawingAttributes;
         private CustomInkInputProcessingMode _currentMode = CustomInkInputProcessingMode.None;
         private double _eraserSize = 20;
         private bool _isErasing;
-        private Stroke _strokeBeingErased;
         private StylusPointCollection _erasePoints;
 
         public PdfPageControl()
@@ -54,6 +55,7 @@ namespace WindowsNotesApp.Controls
 
             InkCanvas.DefaultDrawingAttributes = _drawingAttributes;
             InkCanvas.EditingMode = InkCanvasEditingMode.None;
+            InkCanvas.EditingModeInverted = InkCanvasEditingMode.None; // Disable native inverted erasing so we can use custom logic
             InkCanvas.StrokeCollected += InkCanvas_StrokeCollected;
             InkCanvas.StrokeErasing += InkCanvas_StrokeErasing;
             InkCanvas.StrokeErased += InkCanvas_StrokeErased;
@@ -68,6 +70,7 @@ namespace WindowsNotesApp.Controls
         private void InkCanvas_StrokeCollected(object sender, InkCanvasStrokeCollectedEventArgs e)
         {
             InkMutated?.Invoke(this, EventArgs.Empty);
+            StrokeCollectedUndoable?.Invoke(this, e.Stroke);
         }
 
         private void InkCanvas_StrokeErasing(object sender, InkCanvasStrokeErasingEventArgs e)
@@ -83,12 +86,14 @@ namespace WindowsNotesApp.Controls
         private void PdfPageControl_Loaded(object sender, RoutedEventArgs e)
         {
             TextOverlayCanvas.MouseDown += TextOverlayCanvas_MouseDown;
-            InkCanvas.MouseDown += InkCanvas_MouseDown;
+            PageGrid.MouseDown += PageGrid_MouseDown;
             InkCanvas.MouseMove += InkCanvas_MouseMove;
             InkCanvas.MouseUp += InkCanvas_MouseUp;
             InkCanvas.StylusDown += InkCanvas_StylusDown;
             InkCanvas.StylusMove += InkCanvas_StylusMove;
             InkCanvas.StylusUp += InkCanvas_StylusUp;
+            InkCanvas.StylusButtonDown += InkCanvas_StylusButtonDown;
+            InkCanvas.StylusButtonUp += InkCanvas_StylusButtonUp;
             InkCanvas.MouseEnter += InkCanvas_MouseEnter;
             InkCanvas.MouseLeave += InkCanvas_MouseLeave;
         }
@@ -96,12 +101,14 @@ namespace WindowsNotesApp.Controls
         private void PdfPageControl_Unloaded(object sender, RoutedEventArgs e)
         {
             TextOverlayCanvas.MouseDown -= TextOverlayCanvas_MouseDown;
-            InkCanvas.MouseDown -= InkCanvas_MouseDown;
+            PageGrid.MouseDown -= PageGrid_MouseDown;
             InkCanvas.MouseMove -= InkCanvas_MouseMove;
             InkCanvas.MouseUp -= InkCanvas_MouseUp;
             InkCanvas.StylusDown -= InkCanvas_StylusDown;
             InkCanvas.StylusMove -= InkCanvas_StylusMove;
             InkCanvas.StylusUp -= InkCanvas_StylusUp;
+            InkCanvas.StylusButtonDown -= InkCanvas_StylusButtonDown;
+            InkCanvas.StylusButtonUp -= InkCanvas_StylusButtonUp;
             InkCanvas.MouseEnter -= InkCanvas_MouseEnter;
             InkCanvas.MouseLeave -= InkCanvas_MouseLeave;
         }
@@ -129,7 +136,7 @@ namespace WindowsNotesApp.Controls
                 TextOverlayPointerPressed?.Invoke(this, e);
         }
 
-        private void InkCanvas_MouseDown(object sender, MouseButtonEventArgs e)
+        private void PageGrid_MouseDown(object sender, MouseButtonEventArgs e)
         {
             if (_currentMode == CustomInkInputProcessingMode.None)
             {
@@ -137,9 +144,57 @@ namespace WindowsNotesApp.Controls
             }
         }
 
+        private bool _isBarrelButtonPressed = false;
+        private DateTime _lastBarrelButtonDownTime = DateTime.MinValue;
+        private CustomInkInputProcessingMode _previousMode = CustomInkInputProcessingMode.Inking;
+
+        private void InkCanvas_StylusButtonDown(object sender, StylusButtonEventArgs e)
+        {
+            if (e.StylusButton.Guid == StylusPointProperties.BarrelButton.Id)
+            {
+                _isBarrelButtonPressed = true;
+
+                // Detect double tap on barrel button
+                if ((DateTime.Now - _lastBarrelButtonDownTime).TotalMilliseconds < 500)
+                {
+                    // Double tap detected, toggle eraser mode
+                    if (_currentMode == CustomInkInputProcessingMode.Erasing)
+                    {
+                        SetInputMode(_previousMode);
+                    }
+                    else
+                    {
+                        _previousMode = _currentMode;
+                        SetInputMode(CustomInkInputProcessingMode.Erasing);
+                    }
+                    _lastBarrelButtonDownTime = DateTime.MinValue; // Reset
+                }
+                else
+                {
+                    _lastBarrelButtonDownTime = DateTime.Now;
+                }
+
+                // If we are currently drawing, we should probably stop, but InkCanvas handles this mostly.
+                // We will use this flag in StylusDown/Move to erase instead of draw.
+                if (InkCanvas.EditingMode != InkCanvasEditingMode.None)
+                {
+                    InkCanvas.EditingMode = InkCanvasEditingMode.None;
+                }
+            }
+        }
+
+        private void InkCanvas_StylusButtonUp(object sender, StylusButtonEventArgs e)
+        {
+            if (e.StylusButton.Guid == StylusPointProperties.BarrelButton.Id)
+            {
+                _isBarrelButtonPressed = false;
+                SetInputMode(_currentMode); // Restore InkCanvas.EditingMode based on current mode
+            }
+        }
+
         private void InkCanvas_StylusDown(object sender, StylusDownEventArgs e)
         {
-            if (_currentMode == CustomInkInputProcessingMode.Erasing)
+            if (e.Inverted || _isBarrelButtonPressed || _currentMode == CustomInkInputProcessingMode.Erasing)
             {
                 _isErasing = true;
                 _erasePoints = e.GetStylusPoints(InkCanvas);
@@ -149,7 +204,7 @@ namespace WindowsNotesApp.Controls
 
         private void InkCanvas_StylusMove(object sender, StylusEventArgs e)
         {
-            if (_isErasing && _currentMode == CustomInkInputProcessingMode.Erasing)
+            if (_isErasing && (e.Inverted || _isBarrelButtonPressed || _currentMode == CustomInkInputProcessingMode.Erasing))
             {
                 var newPoints = e.GetStylusPoints(InkCanvas);
                 EraseStrokesAtPoints(newPoints);
@@ -305,22 +360,26 @@ namespace WindowsNotesApp.Controls
             switch (mode)
             {
                 case CustomInkInputProcessingMode.Inking:
+                    InkCanvas.IsHitTestVisible = true;
                     InkCanvas.EditingMode = InkCanvasEditingMode.Ink;
                     EraserIndicator.Visibility = Visibility.Collapsed;
                     InkCanvas.Cursor = Cursors.Cross;
                     Cursor = Cursors.Arrow;
                     break;
                 case CustomInkInputProcessingMode.Erasing:
+                    InkCanvas.IsHitTestVisible = true;
                     InkCanvas.EditingMode = InkCanvasEditingMode.None;
                     InkCanvas.Cursor = Cursors.None;
                     break;
                 case CustomInkInputProcessingMode.None:
+                    InkCanvas.IsHitTestVisible = false; // Allow events to pass through for scrolling
                     InkCanvas.EditingMode = InkCanvasEditingMode.None;
                     EraserIndicator.Visibility = Visibility.Collapsed;
                     InkCanvas.Cursor = Cursors.Arrow;
                     Cursor = Cursors.Arrow;
                     break;
             }
+            ModeChanged?.Invoke(this, mode);
         }
 
         public void SetEraserSize(double size)
@@ -401,6 +460,16 @@ namespace WindowsNotesApp.Controls
         public void ClearStrokes()
         {
             InkCanvas.Strokes.Clear();
+        }
+
+        public void RemoveStrokeQuiet(Stroke stroke)
+        {
+            InkCanvas.Strokes.Remove(stroke);
+        }
+
+        public void AddStrokeQuiet(Stroke stroke)
+        {
+            InkCanvas.Strokes.Add(stroke);
         }
     }
 }

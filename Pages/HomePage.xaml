@@ -26,17 +26,67 @@
             <Button Background="Transparent" BorderThickness="0" Cursor="Hand" Click="AddTile_Click" VerticalAlignment="Top">
                 <Button.Template>
                     <ControlTemplate TargetType="Button">
-                        <Grid Width="120" Height="160" Margin="20,12,20,44">
-                            <Rectangle x:Name="BgRect" Fill="Transparent" RadiusX="10" RadiusY="10"/>
-                            <Rectangle Stroke="#00A0E8" StrokeThickness="2.5" StrokeDashArray="5,3.5"
-                                       RadiusX="10" RadiusY="10"/>
-                            <TextBlock Text="&#xE710;" FontFamily="Segoe MDL2 Assets" FontSize="30"
-                                       Foreground="#00A0E8" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        <Grid x:Name="AddTileContainer" Width="160" Background="Transparent" Margin="20,12">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+
+                            <Grid x:Name="AddTileGrid" Grid.Row="0" Width="120" Height="160" RenderTransformOrigin="0.5,0.5" HorizontalAlignment="Center">
+                                <Grid.RenderTransform>
+                                    <ScaleTransform ScaleX="1" ScaleY="1"/>
+                                </Grid.RenderTransform>
+                                <Viewbox Stretch="Uniform" MaxWidth="90" MaxHeight="120" VerticalAlignment="Center" HorizontalAlignment="Center">
+                                    <Grid Width="90" Height="120">
+                                        <!-- Blur/Glow effect on hover -->
+                                        <Rectangle x:Name="GlowRect" Fill="#FF1DA1F2" RadiusX="6" RadiusY="6" Opacity="0">
+                                            <Rectangle.Effect>
+                                                <BlurEffect Radius="15"/>
+                                            </Rectangle.Effect>
+                                        </Rectangle>
+                                        <Rectangle x:Name="BgRect" Fill="Transparent" RadiusX="5" RadiusY="5"/>
+                                        <Rectangle Stroke="#1DA1F2" StrokeThickness="2" StrokeDashArray="6,4" RadiusX="5" RadiusY="5"/>
+                                        <TextBlock Text="&#xE710;" FontFamily="Segoe MDL2 Assets" FontSize="40" Foreground="#1DA1F2" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    </Grid>
+                                </Viewbox>
+                            </Grid>
                         </Grid>
                         <ControlTemplate.Triggers>
-                            <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="BgRect" Property="Fill" Value="#0800A0E8"/>
-                            </Trigger>
+                            <EventTrigger RoutedEvent="MouseEnter">
+                                <BeginStoryboard>
+                                    <Storyboard>
+                                        <DoubleAnimation Storyboard.TargetName="AddTileGrid" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)" To="1.08" Duration="0:0:0.2">
+                                            <DoubleAnimation.EasingFunction>
+                                                <CubicEase EasingMode="EaseOut"/>
+                                            </DoubleAnimation.EasingFunction>
+                                        </DoubleAnimation>
+                                        <DoubleAnimation Storyboard.TargetName="AddTileGrid" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)" To="1.08" Duration="0:0:0.2">
+                                            <DoubleAnimation.EasingFunction>
+                                                <CubicEase EasingMode="EaseOut"/>
+                                            </DoubleAnimation.EasingFunction>
+                                        </DoubleAnimation>
+                                        <DoubleAnimation Storyboard.TargetName="GlowRect" Storyboard.TargetProperty="Opacity" To="0.25" Duration="0:0:0.2"/>
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </EventTrigger>
+                            <EventTrigger RoutedEvent="MouseLeave">
+                                <BeginStoryboard>
+                                    <Storyboard>
+                                        <DoubleAnimation Storyboard.TargetName="AddTileGrid" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)" To="1.0" Duration="0:0:0.3">
+                                            <DoubleAnimation.EasingFunction>
+                                                <CubicEase EasingMode="EaseOut"/>
+                                            </DoubleAnimation.EasingFunction>
+                                        </DoubleAnimation>
+                                        <DoubleAnimation Storyboard.TargetName="AddTileGrid" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)" To="1.0" Duration="0:0:0.3">
+                                            <DoubleAnimation.EasingFunction>
+                                                <CubicEase EasingMode="EaseOut"/>
+                                            </DoubleAnimation.EasingFunction>
+                                        </DoubleAnimation>
+                                        <DoubleAnimation Storyboard.TargetName="GlowRect" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.3"/>
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </EventTrigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Button.Template>
@@ -45,7 +95,18 @@
 
         <!-- File Tile: notebook icon + info -->
         <DataTemplate x:Key="FileTileTemplate">
-            <Grid Margin="20,12" Width="160">
+            <Border x:Name="FileTileBorder" Margin="20,12" Background="Transparent" CornerRadius="10" Padding="0">
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Setter Property="Background" Value="Transparent"/>
+                        <Style.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Background" Value="#15FFFFFF"/>
+                            </Trigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+            <Grid Width="160" Background="Transparent" Tag="{Binding}" MouseRightButtonUp="FileTile_RightClick">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
                     <RowDefinition Height="Auto"/>
@@ -55,47 +116,68 @@
                 <!-- Notebook icon (clickable) -->
                 <Button Grid.Row="0" Style="{StaticResource InvisibleButtonStyle}"
                         Tag="{Binding}" Click="FileTile_Click" HorizontalAlignment="Center">
-                    <Grid Width="120" Height="160">
+                    <Grid x:Name="IconGrid" Width="120" Height="160" RenderTransformOrigin="0.5,0.5">
                         <Grid.RenderTransform>
-                            <ScaleTransform x:Name="TileScale" ScaleX="1" ScaleY="1" CenterX="60" CenterY="80"/>
+                            <ScaleTransform ScaleX="1" ScaleY="1"/>
                         </Grid.RenderTransform>
-                        <Viewbox Stretch="Uniform" MaxWidth="90" MaxHeight="120">
-                            <Grid Width="80" Height="100">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="8"/>
-                                    <ColumnDefinition Width="*"/>
-                                </Grid.ColumnDefinitions>
-                                <Border Grid.Column="0" Background="#C62828" CornerRadius="2,0,0,2"/>
-                                <Border Grid.Column="1" Background="#8D6E63" CornerRadius="0,4,4,0" Margin="0,0,0,4">
-                                    <Border Margin="6,8,8,8">
-                                        <Grid>
-                                            <Rectangle Fill="#FFF8E1" RadiusX="2" RadiusY="2"/>
-                                            <Line X1="8" Y1="16" X2="44" Y2="16" Stroke="#BDBDBD" StrokeThickness="1.5"/>
-                                            <Line X1="8" Y1="26" X2="44" Y2="26" Stroke="#BDBDBD" StrokeThickness="1.5"/>
-                                            <Line X1="8" Y1="36" X2="44" Y2="36" Stroke="#BDBDBD" StrokeThickness="1.5"/>
-                                        </Grid>
-                                    </Border>
+                        <Viewbox Stretch="Uniform" MaxWidth="90" MaxHeight="120" VerticalAlignment="Center" HorizontalAlignment="Center">
+                            <Grid Width="90" Height="120">
+                                <Rectangle Fill="#B88E75" RadiusX="5" RadiusY="5"/>
+                                <Rectangle Fill="#D94848" Width="12" HorizontalAlignment="Left" RadiusX="5" RadiusY="5"/>
+                                <Rectangle Fill="#D94848" Width="6" HorizontalAlignment="Left" Margin="6,0,0,0"/>
+                                <Rectangle Fill="#A82824" Width="2" HorizontalAlignment="Left" Margin="10,0,0,0"/>
+                                <Border Background="#F5F5F5" CornerRadius="4" BorderBrush="#A08060" BorderThickness="1" Width="44" Height="22" Margin="24,16,0,0" VerticalAlignment="Top" HorizontalAlignment="Left">
+                                    <Rectangle Fill="#B0B0B0" Height="4" Width="24" RadiusX="2" RadiusY="2" HorizontalAlignment="Center" VerticalAlignment="Center"/>
                                 </Border>
                             </Grid>
                         </Viewbox>
                     </Grid>
+                    <Button.Triggers>
+                        <EventTrigger RoutedEvent="MouseEnter">
+                            <BeginStoryboard>
+                                <Storyboard>
+                                    <DoubleAnimation Storyboard.TargetName="IconGrid" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)" To="1.08" Duration="0:0:0.2">
+                                        <DoubleAnimation.EasingFunction>
+                                            <CubicEase EasingMode="EaseOut"/>
+                                        </DoubleAnimation.EasingFunction>
+                                    </DoubleAnimation>
+                                    <DoubleAnimation Storyboard.TargetName="IconGrid" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)" To="1.08" Duration="0:0:0.2">
+                                        <DoubleAnimation.EasingFunction>
+                                            <CubicEase EasingMode="EaseOut"/>
+                                        </DoubleAnimation.EasingFunction>
+                                    </DoubleAnimation>
+                                </Storyboard>
+                            </BeginStoryboard>
+                        </EventTrigger>
+                        <EventTrigger RoutedEvent="MouseLeave">
+                            <BeginStoryboard>
+                                <Storyboard>
+                                    <DoubleAnimation Storyboard.TargetName="IconGrid" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)" To="1.0" Duration="0:0:0.3">
+                                        <DoubleAnimation.EasingFunction>
+                                            <CubicEase EasingMode="EaseOut"/>
+                                        </DoubleAnimation.EasingFunction>
+                                    </DoubleAnimation>
+                                    <DoubleAnimation Storyboard.TargetName="IconGrid" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)" To="1.0" Duration="0:0:0.3">
+                                        <DoubleAnimation.EasingFunction>
+                                            <CubicEase EasingMode="EaseOut"/>
+                                        </DoubleAnimation.EasingFunction>
+                                    </DoubleAnimation>
+                                </Storyboard>
+                            </BeginStoryboard>
+                        </EventTrigger>
+                    </Button.Triggers>
                 </Button>
 
-                <!-- Filename with dropdown chevron -->
-                <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,8,0,0">
-                    <TextBlock Text="{Binding FileName}" TextTrimming="CharacterEllipsis" MaxWidth="130"
-                               FontSize="13" Foreground="#333333" VerticalAlignment="Center"
-                               ToolTip="{Binding Path}"/>
-                    <Button Style="{StaticResource InvisibleButtonStyle}" Tag="{Binding}" Click="TileMenu_Click"
-                            VerticalAlignment="Center" Margin="3,0,0,0" Padding="2">
-                        <TextBlock Text="&#xE70D;" FontFamily="Segoe MDL2 Assets" FontSize="9" Foreground="#999999"/>
-                    </Button>
-                </StackPanel>
+                <!-- Filename (no caret) -->
+                <TextBlock Grid.Row="1" Text="{Binding FileName}" TextTrimming="CharacterEllipsis" MaxWidth="150"
+                           FontSize="13" Foreground="#333333" HorizontalAlignment="Center" Margin="0,8,0,0"
+                           ToolTip="{Binding Path}"/>
 
                 <!-- Page count + date -->
                 <TextBlock Grid.Row="2" Text="{Binding InfoText}" FontSize="12" Foreground="#999999"
                            HorizontalAlignment="Center" Margin="0,3,0,0"/>
             </Grid>
+            </Border>
         </DataTemplate>
 
         <local:HomeTileTemplateSelector x:Key="HomeTileTemplateSelector"
@@ -103,31 +185,18 @@
                                         FileTileTemplate="{StaticResource FileTileTemplate}"/>
     </Page.Resources>
 
-    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
-                  Style="{StaticResource SleekScrollViewer}">
-        <Grid>
-            <!-- Glassmorphism background layer -->
-            <Border CornerRadius="18" Margin="20,16,20,20">
-                <Border.Background>
-                    <SolidColorBrush Color="White" Opacity="0.45"/>
-                </Border.Background>
-                <Border.Effect>
-                    <BlurEffect Radius="40" KernelType="Gaussian"/>
-                </Border.Effect>
-            </Border>
+    <Grid>
+        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+                      Style="{StaticResource SleekScrollViewer}">
             <!-- Glass card -->
-            <Border CornerRadius="18" Margin="20,16,20,20"
+            <Border CornerRadius="16" Margin="24,20,24,24"
                     BorderThickness="1"
-                    BorderBrush="#22FFFFFF">
+                    BorderBrush="#15FFFFFF">
                 <Border.Background>
-                    <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
-                        <GradientStop Color="#50FFFFFF" Offset="0"/>
-                        <GradientStop Color="#30FFFFFF" Offset="0.5"/>
-                        <GradientStop Color="#18FFFFFF" Offset="1"/>
-                    </LinearGradientBrush>
+                    <SolidColorBrush Color="Transparent"/>
                 </Border.Background>
                 <Border.Effect>
-                    <DropShadowEffect BlurRadius="24" ShadowDepth="4" Opacity="0.08" Color="#000"/>
+                    <DropShadowEffect BlurRadius="28" ShadowDepth="4" Opacity="0.03" Color="#000"/>
                 </Border.Effect>
                 <ItemsControl x:Name="TilesGrid"
                               ItemsSource="{Binding HomeTiles}"
@@ -140,6 +209,6 @@
                     </ItemsControl.ItemsPanel>
                 </ItemsControl>
             </Border>
-        </Grid>
-    </ScrollViewer>
+        </ScrollViewer>
+    </Grid>
 </Page>

@@ -1,8 +1,11 @@
 using System;
+using System.Runtime.InteropServices;
+using System.Threading.Tasks;
 using System.Windows;
-using System.Windows.Input;
-using System.Windows.Media;
 using System.Windows.Controls;
+using System.Windows.Input;
+using System.Windows.Interop;
+using System.Windows.Media.Animation;
 using System.Windows.Navigation;
 using WindowsNotesApp.Pages;
 
@@ -13,62 +16,38 @@ namespace WindowsNotesApp
         public MainWindow()
         {
             InitializeComponent();
+            SourceInitialized += MainWindow_SourceInitialized;
             RootFrame.Navigate(new HomePage());
         }
 
-        private void TitleBar_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        private void MainWindow_SourceInitialized(object sender, EventArgs e)
         {
-            if (e.ClickCount == 2)
+            var handle = new WindowInteropHelper(this).Handle;
+            EnableAcrylicBlur(handle);
+        }
+
+        private async void NavBack_Click(object sender, RoutedEventArgs e)
+        {
+            if (RootFrame.Content is EditorPage editor)
             {
-                ToggleMaximize();
+                var saved = await editor.AutoSaveAsync();
+                if (saved) ShowToast("File auto saved");
             }
-            else
-            {
-                DragMove();
-            }
-        }
-
-        private void MinimizeButton_Click(object sender, RoutedEventArgs e)
-        {
-            WindowState = WindowState.Minimized;
-        }
-
-        private void MaximizeButton_Click(object sender, RoutedEventArgs e)
-        {
-            ToggleMaximize();
-        }
-
-        private void CloseButton_Click(object sender, RoutedEventArgs e)
-        {
-            Application.Current.Shutdown();
-        }
-
-        private void ToggleMaximize()
-        {
-            if (WindowState == WindowState.Maximized)
-            {
-                WindowState = WindowState.Normal;
-            }
-            else
-            {
-                WindowState = WindowState.Maximized;
-            }
-        }
-
-        private void NavBack_Click(object sender, RoutedEventArgs e)
-        {
-            if (RootFrame.CanGoBack)
-                RootFrame.GoBack();
+            if (RootFrame.CanGoBack) RootFrame.GoBack();
         }
 
         private void NavForward_Click(object sender, RoutedEventArgs e)
         {
-            if (RootFrame.CanGoForward)
-                RootFrame.GoForward();
+            if (RootFrame.CanGoForward) RootFrame.GoForward();
         }
 
-        private void NavHome_Click(object sender, RoutedEventArgs e)
+        private async void NavHome_Click(object sender, RoutedEventArgs e)
         {
+            if (RootFrame.Content is EditorPage editor)
+            {
+                var saved = await editor.AutoSaveAsync();
+                if (saved) ShowToast("File auto saved");
+            }
             RootFrame.Navigate(new HomePage());
         }
 
@@ -76,6 +55,142 @@ namespace WindowsNotesApp
         {
             NavBackButton.IsEnabled = RootFrame.CanGoBack;
             NavForwardButton.IsEnabled = RootFrame.CanGoForward;
+        }
+
+        // ─── Header Toolbar Buttons ────────────────────
+        private void SearchBox_TextChanged(object sender, TextChangedEventArgs e)
+        {
+            if (RootFrame.Content is HomePage home)
+            {
+                home.Filter(SearchBox.Text);
+            }
+        }
+
+        private void SelectButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (RootFrame.Content is HomePage home)
+            {
+                home.ToggleSelectionMode();
+                ShowToast(home.IsSelectionMode ? "Selection mode enabled" : "Selection mode disabled", "\uE762");
+            }
+            else
+            {
+                ShowToast("Select mode coming soon", "\uE762");
+            }
+        }
+
+        private void SortButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is Button btn && btn.ContextMenu != null)
+            {
+                btn.ContextMenu.IsOpen = true;
+            }
+        }
+
+        private void MoreButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is Button btn && btn.ContextMenu != null)
+            {
+                btn.ContextMenu.IsOpen = true;
+            }
+        }
+
+        private void SortByName_Click(object sender, RoutedEventArgs e)
+        {
+            if (RootFrame.Content is HomePage home)
+            {
+                home.SortByName();
+            }
+        }
+
+        private void SortByDate_Click(object sender, RoutedEventArgs e)
+        {
+            if (RootFrame.Content is HomePage home)
+            {
+                home.SortByDate();
+            }
+        }
+
+        private void Settings_Click(object sender, RoutedEventArgs e)
+        {
+            ShowToast("Settings coming soon", "\uE713");
+        }
+
+        private void About_Click(object sender, RoutedEventArgs e)
+        {
+            MessageBox.Show("Windows Notes App v1.0\nA modern PDF annotation tool.", "About", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+
+        // ─── Toast ─────────────────────────────────────
+        public async void ShowToast(string message, string icon = "\uE73E", int durationMs = 2500)
+        {
+            ToastIcon.Text = icon;
+            ToastText.Text = message;
+            ToastBorder.Visibility = Visibility.Visible;
+
+            var fadeIn = new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(220));
+            fadeIn.EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut };
+            ToastBorder.BeginAnimation(OpacityProperty, fadeIn);
+
+            await Task.Delay(durationMs);
+
+            var fadeOut = new DoubleAnimation(1, 0, TimeSpan.FromMilliseconds(350));
+            fadeOut.EasingFunction = new CubicEase { EasingMode = EasingMode.EaseIn };
+            fadeOut.Completed += (s, ev) => ToastBorder.Visibility = Visibility.Collapsed;
+            ToastBorder.BeginAnimation(OpacityProperty, fadeOut);
+        }
+
+        [DllImport("dwmapi.dll")]
+        private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int attrValue, int attrSize);
+
+        // ─── Acrylic Blur (Glassmorphism) ──────────────
+        [DllImport("user32.dll")]
+        private static extern int SetWindowCompositionAttribute(IntPtr hwnd, ref WindowCompositionAttributeData data);
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct WindowCompositionAttributeData
+        {
+            public int Attribute;
+            public IntPtr Data;
+            public int SizeOfData;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct AccentPolicy
+        {
+            public int AccentState;
+            public int AccentFlags;
+            public int GradientColor;
+            public int AnimationId;
+        }
+
+        private void EnableAcrylicBlur(IntPtr handle)
+        {
+            // Try Windows 11 Mica first
+            int backdropType = 2; // 2 = Mica, 3 = Acrylic
+            DwmSetWindowAttribute(handle, 38, ref backdropType, Marshal.SizeOf(typeof(int)));
+
+            // Fallback for Windows 10
+            var accent = new AccentPolicy
+            {
+                AccentState = 3, // ACCENT_ENABLE_BLURBEHIND
+                AccentFlags = 2,
+                GradientColor = unchecked((int)0x00FFFFFF) // Fully transparent
+            };
+
+            var accentSize = Marshal.SizeOf(accent);
+            var accentPtr = Marshal.AllocHGlobal(accentSize);
+            Marshal.StructureToPtr(accent, accentPtr, false);
+
+            var data = new WindowCompositionAttributeData
+            {
+                Attribute = 19, // WCA_ACCENT_POLICY
+                Data = accentPtr,
+                SizeOfData = accentSize
+            };
+
+            SetWindowCompositionAttribute(handle, ref data);
+            Marshal.FreeHGlobal(accentPtr);
         }
     }
 }

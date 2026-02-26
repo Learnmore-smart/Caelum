@@ -86,6 +86,23 @@
 
                 <!-- Centered tool buttons -->
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                    <!-- Undo -->
+                    <Button x:Name="UndoButton" Click="UndoButton_Click"
+                            Style="{StaticResource ToolbarButtonStyle}"
+                            Width="44" Height="38" Margin="3,0" ToolTip="Undo (Ctrl+Z)" IsEnabled="False">
+                        <TextBlock Text="&#xE7A7;" FontFamily="Segoe MDL2 Assets" FontSize="18" Foreground="#555"/>
+                    </Button>
+
+                    <!-- Redo -->
+                    <Button x:Name="RedoButton" Click="RedoButton_Click"
+                            Style="{StaticResource ToolbarButtonStyle}"
+                            Width="44" Height="38" Margin="3,0,6,0" ToolTip="Redo (Ctrl+Y)" IsEnabled="False">
+                        <TextBlock Text="&#xE7A6;" FontFamily="Segoe MDL2 Assets" FontSize="18" Foreground="#555"/>
+                    </Button>
+
+                    <!-- Separator -->
+                    <Border Width="1" Background="#18000000" Margin="0,8,6,8"/>
+
                     <!-- Pen -->
                     <ToggleButton x:Name="PenToolButton" Click="PenToolButton_Click"
                                   Style="{StaticResource ToolbarToggleButtonStyle}"
@@ -128,10 +145,20 @@
         </Border>
 
         <!-- PDF Pages Container -->
-        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+        <ScrollViewer x:Name="PdfScrollViewer" Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
                       Background="#EAEAEA"
-                      Style="{StaticResource SleekScrollViewer}">
-            <StackPanel x:Name="PagesContainer" Margin="32,20,32,32"/>
+                      Style="{StaticResource SleekScrollViewer}"
+                      PanningMode="Both"
+                      Stylus.IsFlicksEnabled="False"
+                      PreviewStylusDown="PdfScrollViewer_PreviewStylusDown"
+                      PreviewStylusMove="PdfScrollViewer_PreviewStylusMove"
+                      PreviewStylusUp="PdfScrollViewer_PreviewStylusUp"
+                      PreviewMouseWheel="PdfScrollViewer_PreviewMouseWheel">
+            <StackPanel x:Name="PagesContainer" Margin="32,20,32,32">
+                <StackPanel.LayoutTransform>
+                    <ScaleTransform x:Name="PagesZoomTransform" ScaleX="1" ScaleY="1"/>
+                </StackPanel.LayoutTransform>
+            </StackPanel>
         </ScrollViewer>
 
         <!-- Loading Overlay -->

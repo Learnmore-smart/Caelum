@@ -2,10 +2,12 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using Microsoft.Win32;
 
 namespace WindowsNotesApp.Pages
@@ -170,6 +172,51 @@ namespace WindowsNotesApp.Pages
             }
         }
 
+        public bool IsSelectionMode { get; private set; }
+
+        public void ToggleSelectionMode()
+        {
+            IsSelectionMode = !IsSelectionMode;
+            // In a real app, we would show checkboxes on tiles.
+        }
+
+        public void Filter(string query)
+        {
+            var view = System.Windows.Data.CollectionViewSource.GetDefaultView(HomeTiles);
+            if (string.IsNullOrWhiteSpace(query))
+            {
+                view.Filter = null;
+            }
+            else
+            {
+                view.Filter = item =>
+                {
+                    if (item is HomeTile tile)
+                    {
+                        if (tile.IsAddTile) return true;
+                        return tile.FileName?.Contains(query, StringComparison.OrdinalIgnoreCase) == true;
+                    }
+                    return false;
+                };
+            }
+        }
+
+        public void SortByName()
+        {
+            var view = (System.Windows.Data.CollectionView)System.Windows.Data.CollectionViewSource.GetDefaultView(HomeTiles);
+            view.SortDescriptions.Clear();
+            view.SortDescriptions.Add(new SortDescription("IsAddTile", ListSortDirection.Descending)); // Add tile always first
+            view.SortDescriptions.Add(new SortDescription("FileName", ListSortDirection.Ascending));
+        }
+
+        public void SortByDate()
+        {
+            var view = (System.Windows.Data.CollectionView)System.Windows.Data.CollectionViewSource.GetDefaultView(HomeTiles);
+            view.SortDescriptions.Clear();
+            view.SortDescriptions.Add(new SortDescription("IsAddTile", ListSortDirection.Descending)); // Add tile always first
+            view.SortDescriptions.Add(new SortDescription("LastModified", ListSortDirection.Descending));
+        }
+
         private void TilesGrid_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
         }
@@ -189,18 +236,171 @@ namespace WindowsNotesApp.Pages
 
         private void TileMenu_Click(object sender, RoutedEventArgs e)
         {
-            if (sender is Button button && button.Tag is HomeTile tile)
+            // Legacy - no longer used (caret removed)
+        }
+
+        private void FileTile_RightClick(object sender, MouseButtonEventArgs e)
+        {
+            if (sender is Grid grid && grid.Tag is HomeTile tile && !tile.IsAddTile)
             {
                 var menu = new ContextMenu();
-                var removeItem = new MenuItem { Header = "从列表中移除" };
-                removeItem.Click += async (s, ev) =>
-                {
-                    await RemoveMissingRecentTileAsync(tile);
+                menu.Style = BuildContextMenuStyle();
+
+                var viewItem = CreateMenuItem("查看页面", "\uE7C3");
+                viewItem.Click += (s, ev) => _ = OpenRecentTileAsync(tile);
+                menu.Items.Add(viewItem);
+
+                var editItem = CreateMenuItem("编辑", "\uE70F");
+                editItem.Click += async (s, ev) => await RenameTileAsync(tile);
+                menu.Items.Add(editItem);
+
+                var selectItem = CreateMenuItem("选择", "\uE762");
+                selectItem.Click += (s, ev) => ToggleSelectionMode();
+                menu.Items.Add(selectItem);
+
+                var copyItem = CreateMenuItem("复制", "\uE8C8");
+                copyItem.Click += (s, ev) => {
+                    try { Clipboard.SetText(tile.Path); } catch { }
                 };
-                menu.Items.Add(removeItem);
-                menu.PlacementTarget = button;
+                menu.Items.Add(copyItem);
+
+                var cutItem = CreateMenuItem("剪切", "\uE8C6");
+                cutItem.Click += (s, ev) => {
+                    try { Clipboard.SetText(tile.Path); } catch { }
+                };
+                menu.Items.Add(cutItem);
+
+                var exportItem = CreateMenuItem("导出", "\uEDE1");
+                menu.Items.Add(exportItem);
+
+                menu.Items.Add(new Separator { Margin = new Thickness(0, 4, 0, 4) });
+
+                var deleteItem = CreateMenuItem("删除", "\uE74D", new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(211, 47, 47)));
+                deleteItem.Click += async (s, ev) => await RemoveMissingRecentTileAsync(tile);
+                menu.Items.Add(deleteItem);
+
+                menu.PlacementTarget = grid;
                 menu.IsOpen = true;
+                e.Handled = true;
             }
+        }
+
+        private MenuItem CreateMenuItem(string text, string icon, System.Windows.Media.Brush foreground = null)
+        {
+            var item = new MenuItem { Padding = new Thickness(8, 6, 16, 6) };
+            var stack = new StackPanel { Orientation = Orientation.Horizontal };
+            var iconText = new TextBlock { Text = icon, FontFamily = new System.Windows.Media.FontFamily("Segoe MDL2 Assets"), FontSize = 14, Width = 28, VerticalAlignment = VerticalAlignment.Center };
+            var textBlock = new TextBlock { Text = text, FontSize = 13, VerticalAlignment = VerticalAlignment.Center };
+            if (foreground != null)
+            {
+                iconText.Foreground = foreground;
+                textBlock.Foreground = foreground;
+            }
+            else
+            {
+                iconText.Foreground = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(60, 60, 60));
+                textBlock.Foreground = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(30, 30, 30));
+            }
+            stack.Children.Add(iconText);
+            stack.Children.Add(textBlock);
+            item.Header = stack;
+            return item;
+        }
+
+        private async Task RenameTileAsync(HomeTile tile)
+        {
+            if (string.IsNullOrWhiteSpace(tile.Path) || !System.IO.File.Exists(tile.Path)) return;
+
+            var mw = Window.GetWindow(this) as MainWindow;
+            if (mw == null) return;
+
+            // Show a simple input dialog
+            var inputWin = new Window
+            {
+                Title = "Rename",
+                Width = 380,
+                Height = 160,
+                WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                Owner = mw,
+                ResizeMode = ResizeMode.NoResize,
+                WindowStyle = WindowStyle.SingleBorderWindow,
+                Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(250, 250, 250))
+            };
+
+            var stack = new StackPanel { Margin = new Thickness(20, 16, 20, 16) };
+            var nameBox = new TextBox
+            {
+                Text = System.IO.Path.GetFileNameWithoutExtension(tile.Path),
+                FontSize = 14,
+                Padding = new Thickness(8, 6, 8, 6)
+            };
+            nameBox.SelectAll();
+            stack.Children.Add(nameBox);
+
+            var okBtn = new Button
+            {
+                Content = "OK",
+                Width = 80,
+                Height = 30,
+                Margin = new Thickness(0, 14, 0, 0),
+                HorizontalAlignment = HorizontalAlignment.Right
+            };
+            okBtn.Click += (s, ev) => inputWin.DialogResult = true;
+            stack.Children.Add(okBtn);
+            inputWin.Content = stack;
+            nameBox.Focus();
+
+            if (inputWin.ShowDialog() == true)
+            {
+                var newName = nameBox.Text.Trim();
+                if (!string.IsNullOrEmpty(newName))
+                {
+                    var dir = System.IO.Path.GetDirectoryName(tile.Path);
+                    var ext = System.IO.Path.GetExtension(tile.Path);
+                    var newPath = System.IO.Path.Combine(dir, newName + ext);
+                    try
+                    {
+                        System.IO.File.Move(tile.Path, newPath);
+                        tile.SetPath(newPath);
+                        await SaveRecentFilesAsync();
+                    }
+                    catch (Exception ex)
+                    {
+                        await ShowDialogAsync("Error", $"Failed to rename: {ex.Message}");
+                    }
+                }
+            }
+        }
+
+        private Style BuildContextMenuStyle()
+        {
+            var style = new Style(typeof(ContextMenu));
+            style.Setters.Add(new Setter(ContextMenu.BackgroundProperty,
+                new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromArgb(248, 255, 255, 255))));
+            style.Setters.Add(new Setter(ContextMenu.BorderBrushProperty,
+                new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromArgb(30, 0, 0, 0))));
+            style.Setters.Add(new Setter(ContextMenu.BorderThicknessProperty, new Thickness(1)));
+            style.Setters.Add(new Setter(ContextMenu.PaddingProperty, new Thickness(4, 8, 4, 8)));
+            style.Setters.Add(new Setter(ContextMenu.FontSizeProperty, 13.0));
+
+            // Add rounded corners to ContextMenu
+            var template = new ControlTemplate(typeof(ContextMenu));
+            var border = new FrameworkElementFactory(typeof(Border));
+            border.SetValue(Border.BackgroundProperty, new TemplateBindingExtension(ContextMenu.BackgroundProperty));
+            border.SetValue(Border.BorderBrushProperty, new TemplateBindingExtension(ContextMenu.BorderBrushProperty));
+            border.SetValue(Border.BorderThicknessProperty, new TemplateBindingExtension(ContextMenu.BorderThicknessProperty));
+            border.SetValue(Border.CornerRadiusProperty, new CornerRadius(8));
+            border.SetValue(Border.PaddingProperty, new TemplateBindingExtension(ContextMenu.PaddingProperty));
+
+            var effect = new System.Windows.Media.Effects.DropShadowEffect { BlurRadius = 16, ShadowDepth = 4, Opacity = 0.15, Color = System.Windows.Media.Colors.Black };
+            border.SetValue(Border.EffectProperty, effect);
+
+            var itemsPresenter = new FrameworkElementFactory(typeof(ItemsPresenter));
+            border.AppendChild(itemsPresenter);
+            template.VisualTree = border;
+            style.Setters.Add(new Setter(ContextMenu.TemplateProperty, template));
+
+            return style;
         }
 
         private async Task PickAndOpenPdfAsync()
@@ -292,48 +492,7 @@ namespace WindowsNotesApp.Pages
 
         private async Task ShowDialogAsync(string title, string content)
         {
-            var window = Window.GetWindow(this);
-            if (window != null)
-            {
-                var dialog = new Window
-                {
-                    Title = title,
-                    Width = 300,
-                    Height = 150,
-                    WindowStartupLocation = WindowStartupLocation.CenterOwner,
-                    Owner = window,
-                    ResizeMode = ResizeMode.NoResize
-                };
-
-                var grid = new Grid();
-                grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-                grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-
-                var textBlock = new TextBlock
-                {
-                    Text = content,
-                    HorizontalAlignment = HorizontalAlignment.Center,
-                    VerticalAlignment = VerticalAlignment.Center,
-                    TextWrapping = TextWrapping.Wrap,
-                    Margin = new Thickness(20)
-                };
-                Grid.SetRow(textBlock, 0);
-                grid.Children.Add(textBlock);
-
-                var button = new Button
-                {
-                    Content = "OK",
-                    Width = 80,
-                    Height = 28,
-                    Margin = new Thickness(0, 0, 0, 15)
-                };
-                button.Click += (s, e) => dialog.Close();
-                Grid.SetRow(button, 1);
-                grid.Children.Add(button);
-
-                dialog.Content = grid;
-                dialog.ShowDialog();
-            }
+            MessageBox.Show(content, title, MessageBoxButton.OK, MessageBoxImage.Information);
             await Task.CompletedTask;
         }
     }
@@ -343,6 +502,13 @@ namespace WindowsNotesApp.Pages
         public bool IsAddTile { get; private set; }
 
         public string Path { get; private set; }
+
+        public void SetPath(string newPath)
+        {
+            Path = newPath;
+            OnPropertyChanged(nameof(Path));
+            OnPropertyChanged(nameof(FileName));
+        }
 
         private int _pageCount;
         public int PageCount

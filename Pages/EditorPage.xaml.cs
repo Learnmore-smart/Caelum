@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
@@ -10,6 +11,7 @@ using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using System.Windows.Shapes;
 using WindowsNotesApp.Controls;
 using WindowsNotesApp.Models;
 using WindowsNotesApp.Services;
@@ -19,9 +21,9 @@ namespace WindowsNotesApp.Pages
     public sealed partial class EditorPage : Page
     {
         private enum ToolType { None, Pen, Highlighter, Eraser, Text }
-        private enum UnsavedChangesChoice { Save, Discard, Cancel }
 
         private ToolType _currentTool = ToolType.None;
+        private ToolType _previousTool = ToolType.Pen;
         private Color _penColor = Colors.Black;
         private Color _highlighterColor = Colors.Yellow;
         private Color _textColor = Colors.Black;
@@ -54,6 +56,30 @@ namespace WindowsNotesApp.Pages
         private double _dragStartX;
         private double _dragStartY;
 
+        // Undo/Redo
+        private interface IUndoAction { void Undo(); void Redo(); }
+        private class StrokeAddedAction : IUndoAction
+        {
+            private readonly PdfPageControl _page;
+            private readonly System.Windows.Ink.Stroke _stroke;
+            public StrokeAddedAction(PdfPageControl page, System.Windows.Ink.Stroke stroke) { _page = page; _stroke = stroke; }
+            public void Undo() => _page.RemoveStrokeQuiet(_stroke);
+            public void Redo() => _page.AddStrokeQuiet(_stroke);
+        }
+        private readonly List<IUndoAction> _undoStack = new List<IUndoAction>();
+        private readonly List<IUndoAction> _redoStack = new List<IUndoAction>();
+
+        private double _zoomLevel = 1.0;
+        private const double ZoomMin = 0.25;
+        private const double ZoomMax = 4.0;
+        private const double ZoomStep = 0.1;
+
+        // Pen scrolling state
+        private bool _isPenScrolling;
+        private Point _penScrollStartPoint;
+        private double _penScrollStartVerticalOffset;
+        private double _penScrollStartHorizontalOffset;
+
         public EditorPage()
         {
             InitializeComponent();
@@ -62,6 +88,11 @@ namespace WindowsNotesApp.Pages
 
             _pdfService = new PdfService();
             ActivateTool(ToolType.None);
+
+            FixPopupTopmost(_textBoxPopup);
+            FixPopupTopmost(_penPopup);
+            FixPopupTopmost(_highlighterPopup);
+            FixPopupTopmost(_eraserPopup);
 
             KeyDown += EditorPage_KeyDown;
         }
@@ -79,7 +110,117 @@ namespace WindowsNotesApp.Pages
                 ActivateTool(ToolType.None);
                 e.Handled = true;
             }
+            else if (Keyboard.Modifiers == ModifierKeys.Control && e.Key == Key.Z)
+            {
+                PerformUndo();
+                e.Handled = true;
+            }
+            else if (Keyboard.Modifiers == ModifierKeys.Control && e.Key == Key.Y)
+            {
+                PerformRedo();
+                e.Handled = true;
+            }
+            else if (Keyboard.Modifiers == ModifierKeys.Control && (e.Key == Key.D0 || e.Key == Key.NumPad0))
+            {
+                SetZoom(1.0);
+                e.Handled = true;
+            }
+            else if (Keyboard.Modifiers == ModifierKeys.Control && (e.Key == Key.OemPlus || e.Key == Key.Add))
+            {
+                SetZoom(_zoomLevel + ZoomStep);
+                e.Handled = true;
+            }
+            else if (Keyboard.Modifiers == ModifierKeys.Control && (e.Key == Key.OemMinus || e.Key == Key.Subtract))
+            {
+                SetZoom(_zoomLevel - ZoomStep);
+                e.Handled = true;
+            }
         }
+
+        private void PdfScrollViewer_PreviewMouseWheel(object sender, MouseWheelEventArgs e)
+        {
+            if (Keyboard.Modifiers == ModifierKeys.Control)
+            {
+                double delta = e.Delta > 0 ? ZoomStep : -ZoomStep;
+                SetZoom(_zoomLevel + delta);
+                e.Handled = true;
+            }
+        }
+
+        private void PdfScrollViewer_PreviewStylusDown(object sender, StylusDownEventArgs e)
+        {
+            if (_currentTool == ToolType.None)
+            {
+                _isPenScrolling = true;
+                _penScrollStartPoint = e.GetPosition(PdfScrollViewer);
+                _penScrollStartVerticalOffset = PdfScrollViewer.VerticalOffset;
+                _penScrollStartHorizontalOffset = PdfScrollViewer.HorizontalOffset;
+                PdfScrollViewer.CaptureStylus();
+                e.Handled = true;
+            }
+        }
+
+        private void PdfScrollViewer_PreviewStylusMove(object sender, StylusEventArgs e)
+        {
+            if (_isPenScrolling && _currentTool == ToolType.None)
+            {
+                Point currentPoint = e.GetPosition(PdfScrollViewer);
+                double deltaY = currentPoint.Y - _penScrollStartPoint.Y;
+                double deltaX = currentPoint.X - _penScrollStartPoint.X;
+
+                PdfScrollViewer.ScrollToVerticalOffset(_penScrollStartVerticalOffset - deltaY);
+                PdfScrollViewer.ScrollToHorizontalOffset(_penScrollStartHorizontalOffset - deltaX);
+                e.Handled = true;
+            }
+        }
+
+        private void PdfScrollViewer_PreviewStylusUp(object sender, StylusEventArgs e)
+        {
+            if (_isPenScrolling)
+            {
+                _isPenScrolling = false;
+                PdfScrollViewer.ReleaseStylusCapture();
+                e.Handled = true;
+            }
+        }
+
+        private void SetZoom(double level)
+        {
+            _zoomLevel = Math.Max(ZoomMin, Math.Min(ZoomMax, level));
+            PagesZoomTransform.ScaleX = _zoomLevel;
+            PagesZoomTransform.ScaleY = _zoomLevel;
+        }
+
+        private void PerformUndo()
+        {
+            if (_undoStack.Count == 0) return;
+            var action = _undoStack[_undoStack.Count - 1];
+            _undoStack.RemoveAt(_undoStack.Count - 1);
+            action.Undo();
+            _redoStack.Add(action);
+            UpdateUndoRedoButtons();
+            MarkDirty();
+        }
+
+        private void PerformRedo()
+        {
+            if (_redoStack.Count == 0) return;
+            var action = _redoStack[_redoStack.Count - 1];
+            _redoStack.RemoveAt(_redoStack.Count - 1);
+            action.Redo();
+            _undoStack.Add(action);
+            UpdateUndoRedoButtons();
+            MarkDirty();
+        }
+
+        private void UpdateUndoRedoButtons()
+        {
+            UndoButton.IsEnabled = _undoStack.Count > 0;
+            RedoButton.IsEnabled = _redoStack.Count > 0;
+        }
+
+        private void UndoButton_Click(object sender, RoutedEventArgs e) => PerformUndo();
+        private void RedoButton_Click(object sender, RoutedEventArgs e) => PerformRedo();
 
         private void CreateToolPopups()
         {
@@ -305,6 +446,8 @@ namespace WindowsNotesApp.Pages
                     pageControl.TextOverlayPointerPressed += PageControl_TextOverlayPointerPressed;
                     pageControl.BackgroundPointerPressed += PageControl_BackgroundPointerPressed;
                     pageControl.InkMutated += PageControl_InkMutated;
+                    pageControl.StrokeCollectedUndoable += PageControl_StrokeCollectedUndoable;
+                    pageControl.ModeChanged += PageControl_ModeChanged;
 
                     PagesContainer.Children.Add(pageControl);
                 }
@@ -318,24 +461,37 @@ namespace WindowsNotesApp.Pages
             }
             catch (OperationCanceledException)
             {
-                if (sessionId == _loadSessionId)
-                    MessageBox.Show("Loading document was canceled.", "Canceled", MessageBoxButton.OK, MessageBoxImage.Information);
+                // silently handle cancellation
             }
             catch (Exception ex)
             {
                 var errorMsg = $"Failed to load PDF: {ex.Message}";
                 if (ex.InnerException != null)
-                {
                     errorMsg += $"\n\nDetails: {ex.InnerException.Message}";
-                }
 
                 if (sessionId == _loadSessionId)
+                {
                     MessageBox.Show(errorMsg, "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                }
             }
             finally
             {
                 if (sessionId == _loadSessionId)
                     HideLoadingOverlay();
+            }
+        }
+
+        private void PageControl_ModeChanged(object sender, CustomInkInputProcessingMode mode)
+        {
+            // Update UI when mode changes from double tap
+            if (mode == CustomInkInputProcessingMode.Erasing && _currentTool != ToolType.Eraser)
+            {
+                _previousTool = _currentTool;
+                ActivateTool(ToolType.Eraser);
+            }
+            else if (mode == CustomInkInputProcessingMode.Inking && _currentTool == ToolType.Eraser)
+            {
+                ActivateTool(_previousTool);
             }
         }
 
@@ -390,6 +546,8 @@ namespace WindowsNotesApp.Pages
 
         private void ActivateTool(ToolType tool)
         {
+            if (_currentTool == tool) return;
+
             if (tool != ToolType.Text)
                 DeselectTextBox();
 
@@ -455,7 +613,12 @@ namespace WindowsNotesApp.Pages
 
         private async void Back_Click(object sender, RoutedEventArgs e)
         {
-            await AttemptNavigateBackAsync();
+            if (_isDirty && !string.IsNullOrEmpty(_currentPdfPath))
+            {
+                await AutoSaveAsync();
+                GetMainWindow()?.ShowToast("File auto saved");
+            }
+            NavigateBackCore();
         }
 
         private async void SavePdf_Click(object sender, RoutedEventArgs e)
@@ -465,59 +628,111 @@ namespace WindowsNotesApp.Pages
 
         private void InitializeTextBoxPopup()
         {
-            _textBoxPopup = new Popup { Placement = PlacementMode.Top, StaysOpen = true, AllowsTransparency = true, VerticalOffset = -6 };
+            _textBoxPopup = new Popup { Placement = PlacementMode.Bottom, StaysOpen = true, AllowsTransparency = true, VerticalOffset = 6 };
 
-            var panel = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(10) };
+            var panel = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(6, 6, 6, 6) };
             var border = new Border
             {
-                Background = new SolidColorBrush(Color.FromArgb(250, 255, 255, 255)),
-                BorderBrush = new SolidColorBrush(Color.FromArgb(30, 0, 0, 0)),
+                Background = new SolidColorBrush(Color.FromArgb(245, 255, 255, 255)),
+                BorderBrush = new SolidColorBrush(Color.FromArgb(20, 0, 0, 0)),
                 BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(10),
+                CornerRadius = new CornerRadius(12),
                 Child = panel,
                 Effect = new System.Windows.Media.Effects.DropShadowEffect
                 {
-                    BlurRadius = 16,
-                    ShadowDepth = 3,
-                    Opacity = 0.12,
+                    BlurRadius = 20,
+                    ShadowDepth = 4,
+                    Opacity = 0.14,
                     Color = Colors.Black
                 }
             };
 
-            var deleteButton = new Button { Content = "删除", MinWidth = 50, Height = 28, Margin = new Thickness(0, 0, 8, 0), Cursor = Cursors.Hand, FontSize = 12 };
+            // Delete button - clean icon
+            var deleteButton = new Button
+            {
+                Width = 32, Height = 32,
+                Background = Brushes.Transparent,
+                BorderThickness = new Thickness(0),
+                Cursor = Cursors.Hand,
+                ToolTip = "Delete",
+                Margin = new Thickness(2)
+            };
+            deleteButton.Template = CreateIconButtonTemplate("#FECACA", "#FCA5A5");
+            deleteButton.Content = new TextBlock
+            {
+                Text = "\uE74D",
+                FontFamily = new FontFamily("Segoe MDL2 Assets"),
+                FontSize = 14,
+                Foreground = new SolidColorBrush(Color.FromRgb(220, 38, 38)),
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center
+            };
             deleteButton.Click += (s, e) => DeleteSelectedTextBox();
 
-            _fontSizeComboBox = new ComboBox { Width = 70, Margin = new Thickness(0, 0, 8, 0) };
+            // Separator
+            var sep1 = new Border { Width = 1, Background = new SolidColorBrush(Color.FromArgb(20, 0, 0, 0)), Margin = new Thickness(4, 6, 4, 6) };
+
+            _fontSizeComboBox = new ComboBox
+            {
+                Width = 72, Margin = new Thickness(2),
+                Style = (Style)Application.Current.FindResource("ModernComboBox")
+            };
             foreach (var size in new[] { 12, 18, 24, 36, 48, 72 })
-                _fontSizeComboBox.Items.Add(size.ToString());
+            {
+                var item = new ComboBoxItem
+                {
+                    Content = size.ToString(),
+                    Style = (Style)Application.Current.FindResource("ModernComboBoxItem")
+                };
+                _fontSizeComboBox.Items.Add(item);
+            }
             _fontSizeComboBox.SelectionChanged += FontSizeComboBox_SelectionChanged;
 
-            _colorIndicator = new Border { Width = 22, Height = 22, CornerRadius = new CornerRadius(11), Background = new SolidColorBrush(_textColor) };
-            var colorButton = new Button { Content = _colorIndicator, MinWidth = 36, Height = 28, Cursor = Cursors.Hand, Background = Brushes.Transparent, BorderThickness = new Thickness(0) };
+            // Separator
+            var sep2 = new Border { Width = 1, Background = new SolidColorBrush(Color.FromArgb(20, 0, 0, 0)), Margin = new Thickness(4, 6, 4, 6) };
+
+            _colorIndicator = new Border
+            {
+                Width = 22, Height = 22,
+                CornerRadius = new CornerRadius(11),
+                Background = new SolidColorBrush(_textColor),
+                BorderBrush = new SolidColorBrush(Color.FromArgb(30, 0, 0, 0)),
+                BorderThickness = new Thickness(1.5)
+            };
+            var colorButton = new Button
+            {
+                Content = _colorIndicator, Width = 34, Height = 32,
+                Cursor = Cursors.Hand, Background = Brushes.Transparent,
+                BorderThickness = new Thickness(0), Margin = new Thickness(2)
+            };
+            colorButton.Template = CreateIconButtonTemplate("#E8E8E8", "#DCDCDC");
             var colorPopup = new Popup { Placement = PlacementMode.Bottom, StaysOpen = false, AllowsTransparency = true };
-            var colorPanel = new WrapPanel { Margin = new Thickness(10), Width = 180 };
+            var colorPanel = new WrapPanel { Margin = new Thickness(10), Width = 210 };
             var colorBorder = new Border
             {
-                Background = new SolidColorBrush(Color.FromArgb(250, 255, 255, 255)),
-                BorderBrush = new SolidColorBrush(Color.FromArgb(30, 0, 0, 0)),
+                Background = new SolidColorBrush(Color.FromArgb(245, 255, 255, 255)),
+                BorderBrush = new SolidColorBrush(Color.FromArgb(20, 0, 0, 0)),
                 BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(10),
+                CornerRadius = new CornerRadius(12),
                 Child = colorPanel,
-                Effect = new System.Windows.Media.Effects.DropShadowEffect { BlurRadius = 16, ShadowDepth = 3, Opacity = 0.12, Color = Colors.Black }
+                Effect = new System.Windows.Media.Effects.DropShadowEffect { BlurRadius = 20, ShadowDepth = 4, Opacity = 0.14, Color = Colors.Black }
             };
 
-            var textColors = new[] { Colors.Black, Color.FromRgb(220, 38, 38), Color.FromRgb(37, 99, 235), Color.FromRgb(22, 163, 74), Color.FromRgb(245, 158, 11), Color.FromRgb(147, 51, 234), Color.FromRgb(127, 29, 29) };
+            var textColors = new[] { Colors.Black, Colors.White, Color.FromRgb(220, 38, 38), Color.FromRgb(37, 99, 235), Color.FromRgb(22, 163, 74), Color.FromRgb(245, 158, 11), Color.FromRgb(147, 51, 234), Color.FromRgb(127, 29, 29), Color.FromRgb(14, 116, 144), Color.FromRgb(161, 98, 7) };
             foreach (var c in textColors)
             {
+                var isLight = c.R > 220 && c.G > 220 && c.B > 220;
                 var swatch = new Border
                 {
-                    Width = 28,
-                    Height = 28,
-                    CornerRadius = new CornerRadius(14),
+                    Width = 26,
+                    Height = 26,
+                    CornerRadius = new CornerRadius(13),
                     Background = new SolidColorBrush(c),
                     Margin = new Thickness(3),
                     Cursor = Cursors.Hand,
-                    Tag = c
+                    Tag = c,
+                    BorderBrush = isLight ? new SolidColorBrush(Color.FromArgb(40, 0, 0, 0)) : Brushes.Transparent,
+                    BorderThickness = new Thickness(isLight ? 1.5 : 0)
                 };
                 swatch.MouseLeftButtonDown += (s, e) =>
                 {
@@ -544,7 +759,9 @@ namespace WindowsNotesApp.Pages
             };
 
             panel.Children.Add(deleteButton);
+            panel.Children.Add(sep1);
             panel.Children.Add(_fontSizeComboBox);
+            panel.Children.Add(sep2);
             panel.Children.Add(colorButton);
 
             _textBoxPopup.Child = border;
@@ -558,7 +775,8 @@ namespace WindowsNotesApp.Pages
         private void FontSizeComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
             if (_selectedTextBox == null || _fontSizeComboBox.SelectedItem == null) return;
-            if (double.TryParse(_fontSizeComboBox.SelectedItem.ToString(), out var size))
+            var content = _fontSizeComboBox.SelectedItem is ComboBoxItem cbi ? cbi.Content?.ToString() : _fontSizeComboBox.SelectedItem.ToString();
+            if (double.TryParse(content, out var size))
             {
                 _selectedTextBox.FontSize = size;
                 _currentFontSize = size;
@@ -612,13 +830,28 @@ namespace WindowsNotesApp.Pages
 
         private void ApplyTextBoxChrome(TextBox textBox, bool isSelected)
         {
-            textBox.BorderThickness = isSelected ? new Thickness(1) : new Thickness(0);
-            textBox.BorderBrush = isSelected ? Brushes.DodgerBlue : Brushes.Transparent;
+            textBox.BorderThickness = new Thickness(0);
             textBox.Background = Brushes.Transparent;
 
-            if (textBox.Parent is Grid container && container.Children.Count > 0 && container.Children[0] is Border dragHandle)
+            if (textBox.Parent is Grid container)
             {
-                dragHandle.Visibility = isSelected ? Visibility.Visible : Visibility.Collapsed;
+                foreach (UIElement child in container.Children)
+                {
+                    if (child is Border b && !b.IsHitTestVisible && b.Tag is string tag && tag == "chrome")
+                    {
+                        b.BorderBrush = isSelected
+                            ? new SolidColorBrush(Color.FromArgb(90, 0, 120, 212))
+                            : Brushes.Transparent;
+                        b.BorderThickness = isSelected ? new Thickness(1.5) : new Thickness(0);
+                        b.Background = isSelected
+                            ? new SolidColorBrush(Color.FromArgb(10, 0, 120, 212))
+                            : Brushes.Transparent;
+                    }
+                    else if (child is Border handle && handle.Cursor == Cursors.SizeAll)
+                    {
+                        handle.Visibility = isSelected ? Visibility.Visible : Visibility.Collapsed;
+                    }
+                }
             }
         }
 
@@ -630,7 +863,16 @@ namespace WindowsNotesApp.Pages
             var sizes = new[] { 12d, 18d, 24d, 36d, 48d, 72d };
             var nearest = sizes.OrderBy(s => Math.Abs(s - size)).First();
 
-            _fontSizeComboBox.SelectedItem = nearest.ToString();
+            for (int i = 0; i < _fontSizeComboBox.Items.Count; i++)
+            {
+                var item = _fontSizeComboBox.Items[i];
+                var content = item is ComboBoxItem cbi ? cbi.Content?.ToString() : item.ToString();
+                if (content == nearest.ToString())
+                {
+                    _fontSizeComboBox.SelectedIndex = i;
+                    break;
+                }
+            }
 
             var current = (_selectedTextBox.Foreground as SolidColorBrush)?.Color ?? Colors.Black;
             _colorIndicator.Background = new SolidColorBrush(current);
@@ -658,52 +900,68 @@ namespace WindowsNotesApp.Pages
         {
             var container = new Grid { Background = Brushes.Transparent };
 
-            container.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             container.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+            container.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
-            var dragHandle = new Border
+            // Visual chrome border spanning both rows
+            var chrome = new Border
             {
-                Background = new SolidColorBrush(Color.FromRgb(230, 230, 230)),
-                BorderBrush = new SolidColorBrush(Color.FromRgb(180, 180, 180)),
-                BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(6, 6, 0, 0),
-                Height = 26,
-                Visibility = select ? Visibility.Visible : Visibility.Collapsed,
-                Cursor = Cursors.SizeAll
+                CornerRadius = new CornerRadius(8),
+                BorderThickness = select ? new Thickness(1.5) : new Thickness(0),
+                BorderBrush = select ? new SolidColorBrush(Color.FromArgb(90, 0, 120, 212)) : Brushes.Transparent,
+                Background = select ? new SolidColorBrush(Color.FromArgb(10, 0, 120, 212)) : Brushes.Transparent,
+                IsHitTestVisible = false,
+                Tag = "chrome"
             };
-
-            var dragIcon = new TextBlock
-            {
-                Text = "\uE7C2",
-                FontFamily = new FontFamily("Segoe MDL2 Assets"),
-                FontSize = 12,
-                Foreground = new SolidColorBrush(Color.FromRgb(80, 80, 80)),
-                HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Center
-            };
-            dragHandle.Child = dragIcon;
+            Grid.SetRowSpan(chrome, 2);
 
             var textBox = new TextBox
             {
                 Text = text ?? "Text",
                 AcceptsReturn = true,
                 TextWrapping = TextWrapping.Wrap,
-                MinWidth = 120,
-                MinHeight = 36,
-                BorderThickness = new Thickness(select ? 1 : 0),
-                BorderBrush = select ? new SolidColorBrush(Color.FromRgb(0, 120, 212)) : Brushes.Transparent,
+                MinWidth = 100,
+                MinHeight = 30,
+                BorderThickness = new Thickness(0),
                 Background = Brushes.Transparent,
                 FontSize = fontSize ?? _currentFontSize,
                 Foreground = new SolidColorBrush(color ?? _textColor),
                 IsReadOnly = !select,
-                Padding = new Thickness(8, 6, 8, 6)
+                Padding = new Thickness(10, 8, 10, 8),
+                CaretBrush = new SolidColorBrush(Color.FromRgb(0, 120, 212))
             };
 
-            Grid.SetRow(dragHandle, 0);
-            Grid.SetRow(textBox, 1);
+            var dragHandle = new Border
+            {
+                Height = 16,
+                Visibility = select ? Visibility.Visible : Visibility.Collapsed,
+                Cursor = Cursors.SizeAll,
+                Background = Brushes.Transparent
+            };
 
-            container.Children.Add(dragHandle);
+            var dragIcon = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            for (int i = 0; i < 3; i++)
+            {
+                dragIcon.Children.Add(new Ellipse
+                {
+                    Width = 3, Height = 3,
+                    Fill = new SolidColorBrush(Color.FromRgb(180, 180, 180)),
+                    Margin = new Thickness(1.5, 0, 1.5, 0)
+                });
+            }
+            dragHandle.Child = dragIcon;
+
+            Grid.SetRow(textBox, 0);
+            Grid.SetRow(dragHandle, 1);
+
+            container.Children.Add(chrome);
             container.Children.Add(textBox);
+            container.Children.Add(dragHandle);
 
             Canvas.SetLeft(container, position.X);
             Canvas.SetTop(container, position.Y);
@@ -742,9 +1000,10 @@ namespace WindowsNotesApp.Pages
         {
             if (_currentTool != ToolType.Text) return;
             var handle = sender as Border;
-            if (handle?.Parent is Grid container && container.Children.Count > 1 && container.Children[1] is TextBox tb)
+            if (handle?.Parent is Grid container)
             {
-                SelectTextBox(tb);
+                var tb = container.Children.OfType<TextBox>().FirstOrDefault();
+                if (tb != null) SelectTextBox(tb);
             }
 
             var pointOnHandle = e.GetPosition(handle);
@@ -778,7 +1037,7 @@ namespace WindowsNotesApp.Pages
                 {
                     _isDragging = true;
                     _dragArmed = false;
-                    var handle = _draggedContainer.Children[0] as Border;
+                    var handle = _draggedContainer.Children.OfType<Border>().FirstOrDefault(b => b.Cursor == Cursors.SizeAll);
                     handle?.CaptureMouse();
                     _textBoxPopup.IsOpen = false;
                 }
@@ -809,11 +1068,15 @@ namespace WindowsNotesApp.Pages
                 var endY = Canvas.GetTop(_draggedContainer);
                 if (Math.Abs(endX - _dragStartX) > 0.5 || Math.Abs(endY - _dragStartY) > 0.5)
                     MarkDirty();
-                if (wasDragging && _draggedContainer.Children.Count > 1 && _draggedContainer.Children[1] is TextBox tb)
+                if (wasDragging)
                 {
-                    _textBoxPopup.PlacementTarget = _draggedContainer;
-                    _textBoxPopup.IsOpen = true;
-                    tb.Focus();
+                    var tb = _draggedContainer.Children.OfType<TextBox>().FirstOrDefault();
+                    if (tb != null)
+                    {
+                        _textBoxPopup.PlacementTarget = _draggedContainer;
+                        _textBoxPopup.IsOpen = true;
+                        tb.Focus();
+                    }
                 }
             }
             _draggedContainer = null;
@@ -829,66 +1092,93 @@ namespace WindowsNotesApp.Pages
         {
             if (string.IsNullOrEmpty(_currentPdfPath))
             {
-                MessageBox.Show("No PDF is currently loaded.", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                GetMainWindow()?.ShowToast("No PDF is currently loaded", "\uE783");
                 return;
             }
 
             try
             {
                 ShowLoadingOverlay();
-                var annotations = new Dictionary<int, PageAnnotation>();
-
-                foreach (var child in PagesContainer.Children)
-                {
-                    if (child is PdfPageControl page)
-                    {
-                        var pa = new PageAnnotation();
-                        pa.Strokes = page.GetStrokeData();
-
-                        foreach (var element in page.TextOverlay.Children)
-                        {
-                            if (element is Grid container && container.Children.Count > 1 && container.Children[1] is TextBox containerTb)
-                            {
-                                var color = (containerTb.Foreground as SolidColorBrush)?.Color ?? Colors.Black;
-                                pa.Texts.Add(new TextAnnotation
-                                {
-                                    Text = containerTb.Text,
-                                    X = Canvas.GetLeft(container),
-                                    Y = Canvas.GetTop(container),
-                                    R = color.R, G = color.G, B = color.B,
-                                    FontSize = containerTb.FontSize
-                                });
-                            }
-                            else if (element is TextBox tb)
-                            {
-                                var color = (tb.Foreground as SolidColorBrush)?.Color ?? Colors.Black;
-                                pa.Texts.Add(new TextAnnotation
-                                {
-                                    Text = tb.Text,
-                                    X = Canvas.GetLeft(tb),
-                                    Y = Canvas.GetTop(tb),
-                                    R = color.R, G = color.G, B = color.B,
-                                    FontSize = tb.FontSize
-                                });
-                            }
-                        }
-
-                        if (pa.Strokes.Count > 0 || pa.Texts.Count > 0)
-                            annotations[page.PageIndex] = pa;
-                    }
-                }
+                var annotations = CollectAnnotations();
 
                 await _pdfService.SaveAnnotationsToPdfAsync(_currentPdfPath, annotations);
                 _isDirty = false;
 
                 HideLoadingOverlay();
-                MessageBox.Show("Annotations saved to PDF successfully.", "Saved", MessageBoxButton.OK, MessageBoxImage.Information);
+                GetMainWindow()?.ShowToast("Saved successfully");
             }
             catch (Exception ex)
             {
                 HideLoadingOverlay();
                 MessageBox.Show($"Failed to save annotations: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
             }
+        }
+
+        public async Task<bool> AutoSaveAsync()
+        {
+            if (!_isDirty || string.IsNullOrEmpty(_currentPdfPath)) return false;
+            try
+            {
+                var annotations = CollectAnnotations();
+                await _pdfService.SaveAnnotationsToPdfAsync(_currentPdfPath, annotations);
+                _isDirty = false;
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private Dictionary<int, PageAnnotation> CollectAnnotations()
+        {
+            var annotations = new Dictionary<int, PageAnnotation>();
+            foreach (var child in PagesContainer.Children)
+            {
+                if (child is PdfPageControl page)
+                {
+                    var pa = new PageAnnotation();
+                    pa.Strokes = page.GetStrokeData();
+
+                    foreach (var element in page.TextOverlay.Children)
+                    {
+                        var containerTb = (element is Grid container) ? container.Children.OfType<TextBox>().FirstOrDefault() : null;
+                        if (containerTb != null)
+                        {
+                            var color = (containerTb.Foreground as SolidColorBrush)?.Color ?? Colors.Black;
+                            pa.Texts.Add(new TextAnnotation
+                            {
+                                Text = containerTb.Text,
+                                X = Canvas.GetLeft((Grid)containerTb.Parent),
+                                Y = Canvas.GetTop((Grid)containerTb.Parent),
+                                R = color.R, G = color.G, B = color.B,
+                                FontSize = containerTb.FontSize
+                            });
+                        }
+                        else if (element is TextBox tb)
+                        {
+                            var color = (tb.Foreground as SolidColorBrush)?.Color ?? Colors.Black;
+                            pa.Texts.Add(new TextAnnotation
+                            {
+                                Text = tb.Text,
+                                X = Canvas.GetLeft(tb),
+                                Y = Canvas.GetTop(tb),
+                                R = color.R, G = color.G, B = color.B,
+                                FontSize = tb.FontSize
+                            });
+                        }
+                    }
+
+                    if (pa.Strokes.Count > 0 || pa.Texts.Count > 0)
+                        annotations[page.PageIndex] = pa;
+                }
+            }
+            return annotations;
+        }
+
+        private MainWindow GetMainWindow()
+        {
+            return Application.Current.MainWindow as MainWindow;
         }
 
         private async Task LoadAnnotationsFromPdfServiceAsync()
@@ -922,13 +1212,18 @@ namespace WindowsNotesApp.Pages
         }
 
         private void PageControl_InkMutated(object sender, EventArgs e) => MarkDirty();
-        private void MarkDirty() => _isDirty = true;
 
-        private async Task AttemptNavigateBackAsync()
+        private void PageControl_StrokeCollectedUndoable(object sender, System.Windows.Ink.Stroke stroke)
         {
-            if (!await EnsureCanLeaveAsync()) return;
-            NavigateBackCore();
+            if (sender is PdfPageControl page)
+            {
+                _undoStack.Add(new StrokeAddedAction(page, stroke));
+                _redoStack.Clear();
+                UpdateUndoRedoButtons();
+            }
         }
+
+        private void MarkDirty() => _isDirty = true;
 
         private void NavigateBackCore()
         {
@@ -936,30 +1231,6 @@ namespace WindowsNotesApp.Pages
                 NavigationService.GoBack();
             else if (NavigationService != null)
                 NavigationService.Navigate(new HomePage());
-        }
-
-        private async Task<bool> EnsureCanLeaveAsync()
-        {
-            if (!_isDirty) return true;
-            var choice = await ShowUnsavedChangesDialogAsync();
-            if (choice == UnsavedChangesChoice.Save)
-            {
-                await SaveAnnotationsToPdfAsync();
-                return !_isDirty;
-            }
-            if (choice == UnsavedChangesChoice.Discard) { _isDirty = false; return true; }
-            return false;
-        }
-
-        private async Task<UnsavedChangesChoice> ShowUnsavedChangesDialogAsync()
-        {
-            var result = MessageBox.Show("You have unsaved changes. Save before leaving?", "Unsaved changes", MessageBoxButton.YesNoCancel, MessageBoxImage.Question);
-            return result switch
-            {
-                MessageBoxResult.Yes => UnsavedChangesChoice.Save,
-                MessageBoxResult.No => UnsavedChangesChoice.Discard,
-                _ => UnsavedChangesChoice.Cancel
-            };
         }
 
         private void ShowLoadingOverlay()
@@ -987,6 +1258,7 @@ namespace WindowsNotesApp.Pages
                     pageControl.TextOverlayPointerPressed -= PageControl_TextOverlayPointerPressed;
                     pageControl.BackgroundPointerPressed -= PageControl_BackgroundPointerPressed;
                     pageControl.InkMutated -= PageControl_InkMutated;
+                    pageControl.StrokeCollectedUndoable -= PageControl_StrokeCollectedUndoable;
                 }
             }
         }
@@ -1027,6 +1299,48 @@ namespace WindowsNotesApp.Pages
                 (byte)((r + m) * 255),
                 (byte)((g + m) * 255),
                 (byte)((b + m) * 255));
+        }
+
+        [DllImport("user32.dll")]
+        private static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
+
+        private void FixPopupTopmost(Popup popup)
+        {
+            popup.Opened += (s, e) =>
+            {
+                var source = PresentationSource.FromVisual(popup.Child) as System.Windows.Interop.HwndSource;
+                if (source != null)
+                    SetWindowPos(source.Handle, new IntPtr(-2), 0, 0, 0, 0, 0x0010 | 0x0002 | 0x0001);
+            };
+        }
+
+        private static ControlTemplate CreateIconButtonTemplate(string hoverColor, string pressedColor)
+        {
+            var template = new ControlTemplate(typeof(Button));
+            var borderFactory = new FrameworkElementFactory(typeof(Border));
+            borderFactory.SetValue(Border.BackgroundProperty, Brushes.Transparent);
+            borderFactory.SetValue(Border.CornerRadiusProperty, new CornerRadius(8));
+            borderFactory.SetValue(Border.PaddingProperty, new Thickness(4));
+            borderFactory.Name = "Root";
+
+            var contentFactory = new FrameworkElementFactory(typeof(ContentPresenter));
+            contentFactory.SetValue(ContentPresenter.HorizontalAlignmentProperty, HorizontalAlignment.Center);
+            contentFactory.SetValue(ContentPresenter.VerticalAlignmentProperty, VerticalAlignment.Center);
+            borderFactory.AppendChild(contentFactory);
+
+            template.VisualTree = borderFactory;
+
+            var hoverTrigger = new Trigger { Property = UIElement.IsMouseOverProperty, Value = true };
+            hoverTrigger.Setters.Add(new Setter(Border.BackgroundProperty,
+                new SolidColorBrush((Color)ColorConverter.ConvertFromString(hoverColor)), "Root"));
+            template.Triggers.Add(hoverTrigger);
+
+            var pressTrigger = new Trigger { Property = System.Windows.Controls.Primitives.ButtonBase.IsPressedProperty, Value = true };
+            pressTrigger.Setters.Add(new Setter(Border.BackgroundProperty,
+                new SolidColorBrush((Color)ColorConverter.ConvertFromString(pressedColor)), "Root"));
+            template.Triggers.Add(pressTrigger);
+
+            return template;
         }
     }
 }
