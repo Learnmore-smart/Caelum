@@ -8,7 +8,8 @@
 
     <Grid x:Name="PageGrid" Background="White" Margin="0,0,0,20">
         <!-- PDF Background -->
-        <Image x:Name="PdfImage" Stretch="Uniform" HorizontalAlignment="Center" VerticalAlignment="Top"/>
+        <Image x:Name="PdfImage" Stretch="Uniform" HorizontalAlignment="Center" VerticalAlignment="Top"
+               RenderOptions.BitmapScalingMode="HighQuality"/>
 
         <!-- Ink Layer (WinUI Native InkCanvas) -->
         <InkCanvas x:Name="InkCanvas" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" Background="Transparent" />

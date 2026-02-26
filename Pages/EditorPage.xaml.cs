@@ -38,6 +38,7 @@ namespace WindowsNotesApp.Pages
         private int _loadSessionId;
         private bool _isDirty;
         private string _currentPdfPath;
+        public string CurrentPdfPath => _currentPdfPath;
 
         private TextBox _selectedTextBox;
         private Popup _textBoxPopup;
@@ -70,6 +71,16 @@ namespace WindowsNotesApp.Pages
         private readonly List<IUndoAction> _redoStack = new List<IUndoAction>();
 
         private double _zoomLevel = 1.0;
+        private double _lastRenderedDpiScale = 1.0;
+        private CancellationTokenSource _reRenderCts;
+
+        // Smooth scrolling
+        private double _targetVerticalOffset;
+        private bool _smoothScrollInitialized;
+
+        // Touch manipulation state
+        private double _manipulationBaseZoom;
+
         private const double ZoomMin = 0.25;
         private const double ZoomMax = 4.0;
         private const double ZoomStep = 0.1;
@@ -79,6 +90,12 @@ namespace WindowsNotesApp.Pages
         private Point _penScrollStartPoint;
         private double _penScrollStartVerticalOffset;
         private double _penScrollStartHorizontalOffset;
+
+        // Huawei pen support
+        private HuaweiPenService _huaweiPenService;
+
+        // Auto-save timer (every 60 seconds)
+        private System.Windows.Threading.DispatcherTimer _autoSaveTimer;
 
         public EditorPage()
         {
@@ -95,6 +112,82 @@ namespace WindowsNotesApp.Pages
             FixPopupTopmost(_eraserPopup);
 
             KeyDown += EditorPage_KeyDown;
+
+            Loaded += EditorPage_Loaded;
+            Unloaded += EditorPage_Unloaded;
+
+            // Start interval auto-save timer
+            _autoSaveTimer = new System.Windows.Threading.DispatcherTimer
+            {
+                Interval = TimeSpan.FromSeconds(60)
+            };
+            _autoSaveTimer.Tick += AutoSaveTimer_Tick;
+            _autoSaveTimer.Start();
+        }
+
+        private void EditorPage_Loaded(object sender, RoutedEventArgs e)
+        {
+            InitializeHuaweiPenService();
+        }
+
+        private void EditorPage_Unloaded(object sender, RoutedEventArgs e)
+        {
+            _autoSaveTimer?.Stop();
+            _autoSaveTimer = null;
+            _huaweiPenService?.Dispose();
+            _huaweiPenService = null;
+        }
+
+        private async void AutoSaveTimer_Tick(object sender, EventArgs e)
+        {
+            var saved = await AutoSaveAsync();
+            if (saved)
+            {
+                var mw = Window.GetWindow(this) as MainWindow;
+                mw?.ShowToast("Auto saved", "\uE74E", 1500);
+            }
+        }
+
+        private void InitializeHuaweiPenService()
+        {
+            if (_huaweiPenService != null)
+            {
+                Console.WriteLine("[EditorPage] HuaweiPenService already initialized, skipping");
+                return;
+            }
+
+            var window = Window.GetWindow(this);
+            Console.WriteLine($"[EditorPage] InitializeHuaweiPenService – Window={window?.GetType().Name ?? "NULL"}");
+
+            _huaweiPenService = new HuaweiPenService();
+            _huaweiPenService.ToolToggleRequested += HuaweiPenService_ToolToggleRequested;
+            _huaweiPenService.Initialize(window);
+            Console.WriteLine("[EditorPage] HuaweiPenService.Initialize() returned");
+        }
+
+        private void HuaweiPenService_ToolToggleRequested(object sender, EventArgs e)
+        {
+            Console.WriteLine($"[EditorPage] ToolToggleRequested received on thread {System.Threading.Thread.CurrentThread.ManagedThreadId}");
+            Dispatcher.BeginInvoke(new Action(() =>
+            {
+                Console.WriteLine($"[EditorPage] ToggleEraserMode executing, current={_currentTool}");
+                ToggleEraserMode();
+            }));
+        }
+
+        private void ToggleEraserMode()
+        {
+            if (_currentTool == ToolType.Eraser)
+            {
+                Console.WriteLine($"[EditorPage] Eraser → {_previousTool}");
+                ActivateTool(_previousTool);
+            }
+            else
+            {
+                Console.WriteLine($"[EditorPage] {_currentTool} → Eraser");
+                _previousTool = _currentTool;
+                ActivateTool(ToolType.Eraser);
+            }
         }
 
         public EditorPage(string filePath) : this()
@@ -141,15 +234,155 @@ namespace WindowsNotesApp.Pages
         {
             if (Keyboard.Modifiers == ModifierKeys.Control)
             {
+                // Zoom around mouse position
+                var mousePos = e.GetPosition(PdfScrollViewer);
+                double oldZoom = _zoomLevel;
                 double delta = e.Delta > 0 ? ZoomStep : -ZoomStep;
-                SetZoom(_zoomLevel + delta);
+                double newZoom = Math.Max(ZoomMin, Math.Min(ZoomMax, _zoomLevel + delta));
+
+                if (Math.Abs(newZoom - oldZoom) > 0.001)
+                    ZoomAroundPoint(newZoom, mousePos);
+
                 e.Handled = true;
+                return;
+            }
+
+            // Smooth scroll: animate to target offset
+            e.Handled = true;
+
+            if (!_smoothScrollInitialized)
+            {
+                _targetVerticalOffset = PdfScrollViewer.VerticalOffset;
+                _smoothScrollInitialized = true;
+            }
+
+            double scrollAmount = -e.Delta * 0.8;
+            _targetVerticalOffset = Math.Max(0,
+                Math.Min(PdfScrollViewer.ScrollableHeight, _targetVerticalOffset + scrollAmount));
+
+            AnimateScroll(_targetVerticalOffset);
+        }
+
+        // ─── Zoom around a point (keeps that point stable on screen) ───
+        private void ZoomAroundPoint(double newZoom, Point viewportPoint)
+        {
+            double oldZoom = _zoomLevel;
+
+            // Convert viewport point to content coordinates
+            double contentX = (PdfScrollViewer.HorizontalOffset + viewportPoint.X) / oldZoom;
+            double contentY = (PdfScrollViewer.VerticalOffset + viewportPoint.Y) / oldZoom;
+
+            // Apply zoom
+            _zoomLevel = newZoom;
+            PagesZoomTransform.ScaleX = _zoomLevel;
+            PagesZoomTransform.ScaleY = _zoomLevel;
+
+            // Force layout so ScrollableHeight/Width update
+            PdfScrollViewer.UpdateLayout();
+
+            // Calculate new offsets to keep the point stable
+            double newOffsetX = contentX * newZoom - viewportPoint.X;
+            double newOffsetY = contentY * newZoom - viewportPoint.Y;
+
+            PdfScrollViewer.ScrollToHorizontalOffset(Math.Max(0, newOffsetX));
+            PdfScrollViewer.ScrollToVerticalOffset(Math.Max(0, newOffsetY));
+
+            // Sync smooth scroll target
+            _targetVerticalOffset = PdfScrollViewer.VerticalOffset;
+            _smoothScrollInitialized = true;
+
+            ScheduleReRenderForZoom();
+
+            UpdateZoomLabel();
+        }
+
+        // ─── Touch Manipulation (pinch-to-zoom + pan) ───
+        private void PdfScrollViewer_ManipulationStarting(object sender, ManipulationStartingEventArgs e)
+        {
+            e.ManipulationContainer = PdfScrollViewer;
+            e.Mode = ManipulationModes.Scale | ManipulationModes.Translate;
+            _manipulationBaseZoom = _zoomLevel;
+            e.Handled = true;
+        }
+
+        private void PdfScrollViewer_ManipulationDelta(object sender, ManipulationDeltaEventArgs e)
+        {
+            // Pan (translate)
+            double panX = e.DeltaManipulation.Translation.X;
+            double panY = e.DeltaManipulation.Translation.Y;
+
+            PdfScrollViewer.ScrollToHorizontalOffset(PdfScrollViewer.HorizontalOffset - panX);
+            PdfScrollViewer.ScrollToVerticalOffset(PdfScrollViewer.VerticalOffset - panY);
+
+            // Pinch-to-zoom
+            double scaleX = e.DeltaManipulation.Scale.X;
+            double scaleY = e.DeltaManipulation.Scale.Y;
+            double pinchScale = (scaleX + scaleY) / 2.0;
+
+            if (Math.Abs(pinchScale - 1.0) > 0.001)
+            {
+                var origin = e.ManipulationOrigin;
+                double newZoom = Math.Max(ZoomMin, Math.Min(ZoomMax, _zoomLevel * pinchScale));
+                ZoomAroundPoint(newZoom, origin);
+            }
+
+            // Sync smooth scroll state
+            _targetVerticalOffset = PdfScrollViewer.VerticalOffset;
+            _smoothScrollInitialized = true;
+
+            e.Handled = true;
+        }
+
+        private void PdfScrollViewer_ManipulationInertiaStarting(object sender, ManipulationInertiaStartingEventArgs e)
+        {
+            // Deceleration for flick-to-scroll
+            e.TranslationBehavior.DesiredDeceleration = 0.002; // DIPs per ms^2
+            e.ExpansionBehavior.DesiredDeceleration = 0.0001;
+            e.Handled = true;
+        }
+
+        // ─── Smooth scroll animation ───
+        private double _scrollAnimationTarget;
+        private double _scrollAnimationStart;
+        private DateTime _scrollAnimationStartTime;
+        private TimeSpan _scrollAnimationDuration;
+        private bool _isScrollAnimating;
+
+        private void AnimateScroll(double toOffset)
+        {
+            _scrollAnimationTarget = toOffset;
+            _scrollAnimationStart = PdfScrollViewer.VerticalOffset;
+            _scrollAnimationStartTime = DateTime.UtcNow;
+            _scrollAnimationDuration = TimeSpan.FromMilliseconds(180);
+
+            if (!_isScrollAnimating)
+            {
+                _isScrollAnimating = true;
+                System.Windows.Media.CompositionTarget.Rendering += CompositionTarget_ScrollRendering;
+            }
+        }
+
+        private void CompositionTarget_ScrollRendering(object sender, EventArgs e)
+        {
+            var elapsed = DateTime.UtcNow - _scrollAnimationStartTime;
+            double progress = Math.Min(1.0, elapsed.TotalMilliseconds / _scrollAnimationDuration.TotalMilliseconds);
+            double easedProgress = 1.0 - Math.Pow(1.0 - progress, 3);
+
+            double currentOffset = _scrollAnimationStart + (_scrollAnimationTarget - _scrollAnimationStart) * easedProgress;
+            PdfScrollViewer.ScrollToVerticalOffset(currentOffset);
+
+            if (progress >= 1.0)
+            {
+                _isScrollAnimating = false;
+                System.Windows.Media.CompositionTarget.Rendering -= CompositionTarget_ScrollRendering;
             }
         }
 
         private void PdfScrollViewer_PreviewStylusDown(object sender, StylusDownEventArgs e)
         {
-            if (_currentTool == ToolType.None)
+            // Only handle pen (not finger touch) for stylus-drag scrolling
+            // Finger touch should go through to ManipulationDelta for pinch-to-zoom
+            if (_currentTool == ToolType.None && e.StylusDevice?.TabletDevice?.Type == TabletDeviceType.Stylus)
             {
                 _isPenScrolling = true;
                 _penScrollStartPoint = e.GetPosition(PdfScrollViewer);
@@ -162,7 +395,7 @@ namespace WindowsNotesApp.Pages
 
         private void PdfScrollViewer_PreviewStylusMove(object sender, StylusEventArgs e)
         {
-            if (_isPenScrolling && _currentTool == ToolType.None)
+            if (_isPenScrolling && _currentTool == ToolType.None && e.StylusDevice?.TabletDevice?.Type == TabletDeviceType.Stylus)
             {
                 Point currentPoint = e.GetPosition(PdfScrollViewer);
                 double deltaY = currentPoint.Y - _penScrollStartPoint.Y;
@@ -189,6 +422,57 @@ namespace WindowsNotesApp.Pages
             _zoomLevel = Math.Max(ZoomMin, Math.Min(ZoomMax, level));
             PagesZoomTransform.ScaleX = _zoomLevel;
             PagesZoomTransform.ScaleY = _zoomLevel;
+
+            UpdateZoomLabel();
+
+            // Sync smooth scroll state
+            _targetVerticalOffset = PdfScrollViewer.VerticalOffset;
+            _smoothScrollInitialized = true;
+
+            // Re-render pages at higher DPI when zoomed in (debounced)
+            ScheduleReRenderForZoom();
+        }
+
+        private async void ScheduleReRenderForZoom()
+        {
+            // Cancel any pending re-render
+            _reRenderCts?.Cancel();
+            _reRenderCts = new CancellationTokenSource();
+            var token = _reRenderCts.Token;
+
+            try
+            {
+                // Debounce: wait 400ms after last zoom change
+                await Task.Delay(400, token);
+                token.ThrowIfCancellationRequested();
+
+                // Only re-render if zoom changed significantly from last render
+                double neededScale = Math.Max(_zoomLevel, 1.0);
+                // Clamp max re-render to 3x to avoid huge memory usage
+                neededScale = Math.Min(neededScale, 3.0);
+
+                if (Math.Abs(neededScale - _lastRenderedDpiScale) < 0.15)
+                    return; // Not enough difference to warrant re-render
+
+                _lastRenderedDpiScale = neededScale;
+
+                foreach (UIElement child in PagesContainer.Children)
+                {
+                    token.ThrowIfCancellationRequested();
+                    if (child is PdfPageControl page)
+                    {
+                        var imageBytes = await _pdfService.RenderPagePngBytesAsync(page.PageIndex, neededScale, token);
+                        if (imageBytes != null && imageBytes.Length > 0)
+                        {
+                            token.ThrowIfCancellationRequested();
+                            var image = await CreateBitmapImageAsync(imageBytes, token);
+                            // Keep the control dimensions at 192 DPI base size
+                            page.PageSource = image;
+                        }
+                    }
+                }
+            }
+            catch (OperationCanceledException) { }
         }
 
         private void PerformUndo()
@@ -439,8 +723,8 @@ namespace WindowsNotesApp.Pages
                     {
                         PageSource = image,
                         PageIndex = (int)i,
-                        Width = image.PixelWidth,
-                        Height = image.PixelHeight
+                        Width = image.Width,
+                        Height = image.Height
                     };
 
                     pageControl.TextOverlayPointerPressed += PageControl_TextOverlayPointerPressed;
@@ -562,12 +846,12 @@ namespace WindowsNotesApp.Pages
 
             _isUpdatingToolState = true;
             _currentTool = tool;
-            
+
             PenToolButton.Background = tool == ToolType.Pen ? new SolidColorBrush(Color.FromArgb(34, 0, 120, 212)) : Brushes.Transparent;
             HighlighterToolButton.Background = tool == ToolType.Highlighter ? new SolidColorBrush(Color.FromArgb(34, 0, 120, 212)) : Brushes.Transparent;
             EraserToolButton.Background = tool == ToolType.Eraser ? new SolidColorBrush(Color.FromArgb(34, 0, 120, 212)) : Brushes.Transparent;
             TextToolButton.Background = tool == ToolType.Text ? new SolidColorBrush(Color.FromArgb(34, 0, 120, 212)) : Brushes.Transparent;
-            
+
             _isUpdatingToolState = false;
 
             UpdateToolIconColors();
@@ -635,6 +919,72 @@ namespace WindowsNotesApp.Pages
         private async void SavePdf_Click(object sender, RoutedEventArgs e)
         {
             await SaveAnnotationsToPdfAsync();
+        }
+
+        private void ZoomInButton_Click(object sender, RoutedEventArgs e)
+        {
+            var center = new Point(PdfScrollViewer.ViewportWidth / 2, PdfScrollViewer.ViewportHeight / 2);
+            double newZoom = Math.Max(ZoomMin, Math.Min(ZoomMax, _zoomLevel + ZoomStep));
+            ZoomAroundPoint(newZoom, center);
+        }
+
+        private void ZoomOutButton_Click(object sender, RoutedEventArgs e)
+        {
+            var center = new Point(PdfScrollViewer.ViewportWidth / 2, PdfScrollViewer.ViewportHeight / 2);
+            double newZoom = Math.Max(ZoomMin, Math.Min(ZoomMax, _zoomLevel - ZoomStep));
+            ZoomAroundPoint(newZoom, center);
+        }
+
+        private void ZoomLabel_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            // Show editable text box with current percentage
+            ZoomLabel.Visibility = Visibility.Collapsed;
+            ZoomTextBox.Text = $"{(int)Math.Round(_zoomLevel * 100)}";
+            ZoomTextBox.Visibility = Visibility.Visible;
+            ZoomTextBox.Focus();
+            ZoomTextBox.SelectAll();
+        }
+
+        private void ZoomTextBox_KeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.Key == Key.Enter)
+            {
+                ApplyZoomFromTextBox();
+                e.Handled = true;
+            }
+            else if (e.Key == Key.Escape)
+            {
+                HideZoomTextBox();
+                e.Handled = true;
+            }
+        }
+
+        private void ZoomTextBox_LostFocus(object sender, RoutedEventArgs e)
+        {
+            ApplyZoomFromTextBox();
+        }
+
+        private void ApplyZoomFromTextBox()
+        {
+            var text = ZoomTextBox.Text.Trim().TrimEnd('%');
+            if (int.TryParse(text, out int pct) && pct >= (int)(ZoomMin * 100) && pct <= (int)(ZoomMax * 100))
+            {
+                var center = new Point(PdfScrollViewer.ViewportWidth / 2, PdfScrollViewer.ViewportHeight / 2);
+                ZoomAroundPoint(pct / 100.0, center);
+            }
+            HideZoomTextBox();
+        }
+
+        private void HideZoomTextBox()
+        {
+            ZoomTextBox.Visibility = Visibility.Collapsed;
+            ZoomLabel.Visibility = Visibility.Visible;
+        }
+
+        private void UpdateZoomLabel()
+        {
+            if (ZoomLabel != null)
+                ZoomLabel.Text = $"{(int)Math.Round(_zoomLevel * 100)}%";
         }
 
         private void InitializeTextBoxPopup()

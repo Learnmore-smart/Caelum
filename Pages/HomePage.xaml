@@ -178,8 +178,9 @@
     </Page.Resources>
 
     <Grid>
-        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
-                      Style="{StaticResource SleekScrollViewer}">
+        <ScrollViewer x:Name="HomeScrollViewer" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+                      Style="{StaticResource SleekScrollViewer}"
+                      PreviewMouseWheel="HomeScrollViewer_PreviewMouseWheel">
             <!-- Glass card -->
             <Border CornerRadius="16" Margin="24,20,24,24"
                     BorderThickness="1"

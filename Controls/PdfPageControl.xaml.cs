@@ -40,6 +40,13 @@ namespace WindowsNotesApp.Controls
         private bool _isErasing;
         private StylusPointCollection _erasePoints;
 
+        // Tracks whether the stylus is currently inverted (physical eraser end),
+        // which corresponds to Windows Ink's IsEraser / PointerPointProperties.IsEraser.
+        // When inverted, we override the current mode to erase regardless of the
+        // selected tool – this is how standard Windows Ink pens work and is the
+        // signal path used by Huawei M-Pencil when MateBook-E-Pen is active.
+        private bool _isStylusInverted;
+
         public PdfPageControl()
         {
             InitializeComponent();
@@ -92,6 +99,7 @@ namespace WindowsNotesApp.Controls
             InkCanvas.StylusDown += InkCanvas_StylusDown;
             InkCanvas.StylusMove += InkCanvas_StylusMove;
             InkCanvas.StylusUp += InkCanvas_StylusUp;
+            InkCanvas.StylusInAirMove += InkCanvas_StylusInAirMove;
             InkCanvas.StylusButtonDown += InkCanvas_StylusButtonDown;
             InkCanvas.StylusButtonUp += InkCanvas_StylusButtonUp;
             InkCanvas.MouseEnter += InkCanvas_MouseEnter;
@@ -107,6 +115,7 @@ namespace WindowsNotesApp.Controls
             InkCanvas.StylusDown -= InkCanvas_StylusDown;
             InkCanvas.StylusMove -= InkCanvas_StylusMove;
             InkCanvas.StylusUp -= InkCanvas_StylusUp;
+            InkCanvas.StylusInAirMove -= InkCanvas_StylusInAirMove;
             InkCanvas.StylusButtonDown -= InkCanvas_StylusButtonDown;
             InkCanvas.StylusButtonUp -= InkCanvas_StylusButtonUp;
             InkCanvas.MouseEnter -= InkCanvas_MouseEnter;
@@ -115,7 +124,7 @@ namespace WindowsNotesApp.Controls
 
         private void InkCanvas_MouseEnter(object sender, MouseEventArgs e)
         {
-            if (_currentMode == CustomInkInputProcessingMode.Erasing)
+            if (_currentMode == CustomInkInputProcessingMode.Erasing || _isStylusInverted)
             {
                 EraserIndicator.Visibility = Visibility.Visible;
                 Cursor = Cursors.None;
@@ -127,6 +136,45 @@ namespace WindowsNotesApp.Controls
         {
             EraserIndicator.Visibility = Visibility.Collapsed;
             Cursor = Cursors.Arrow;
+            _isStylusInverted = false;
+        }
+
+        /// <summary>
+        /// Detects when the stylus is hovering in inverted (eraser) mode.
+        /// This is the standard Windows Ink path for IsEraser: when the user
+        /// flips the pen to the eraser end, StylusDevice.Inverted becomes true
+        /// even while hovering, before contact.  Also triggered by Huawei
+        /// M-Pencil when MateBook-E-Pen patches AcAppDaemon.exe.
+        /// </summary>
+        private void InkCanvas_StylusInAirMove(object sender, StylusEventArgs e)
+        {
+            bool inverted = e.StylusDevice?.Inverted == true;
+
+            if (inverted != _isStylusInverted)
+            {
+                _isStylusInverted = inverted;
+                Console.WriteLine(
+                    $"[PdfPageControl] Stylus Inverted changed → {inverted} (device={e.StylusDevice?.Name})");
+
+                if (inverted)
+                {
+                    // Show eraser indicator while hovering with inverted pen
+                    InkCanvas.EditingMode = InkCanvasEditingMode.None; // suppress inking
+                    EraserIndicator.Visibility = Visibility.Visible;
+                    InkCanvas.Cursor = Cursors.None;
+                }
+                else if (_currentMode != CustomInkInputProcessingMode.Erasing)
+                {
+                    // Pen flipped back to normal – restore previous mode
+                    EraserIndicator.Visibility = Visibility.Collapsed;
+                    SetInputMode(_currentMode);
+                }
+            }
+
+            if (inverted)
+            {
+                UpdateEraserIndicatorPosition(e.GetPosition(PageGrid));
+            }
         }
 
         private void TextOverlayCanvas_MouseDown(object sender, MouseButtonEventArgs e)
@@ -148,16 +196,35 @@ namespace WindowsNotesApp.Controls
         private DateTime _lastBarrelButtonDownTime = DateTime.MinValue;
         private CustomInkInputProcessingMode _previousMode = CustomInkInputProcessingMode.Inking;
 
+        private static readonly Guid[] SideButtonGuids = new[]
+        {
+            StylusPointProperties.BarrelButton.Id,
+            StylusPointProperties.SecondaryTipButton.Id,
+            StylusPointProperties.TipButton.Id,
+            new Guid("E33D9F0A-D9FB-4D2E-8B7D-4E7A5B8C9D0E"),
+            new Guid("E33D9F0B-D9FB-4D2E-8B7D-4E7A5B8C9D0E"),
+        };
+
         private void InkCanvas_StylusButtonDown(object sender, StylusButtonEventArgs e)
         {
-            if (e.StylusButton.Guid == StylusPointProperties.BarrelButton.Id)
+            Console.WriteLine($"[PdfPageControl] StylusButtonDown: name={e.StylusButton.Name}, GUID={e.StylusButton.Guid}, device={e.StylusDevice?.Name}");
+
+            bool isSideButton = false;
+            foreach (var guid in SideButtonGuids)
+            {
+                if (e.StylusButton.Guid == guid)
+                {
+                    isSideButton = true;
+                    break;
+                }
+            }
+
+            if (isSideButton || e.StylusButton.Name.Contains("Barrel") || e.StylusButton.Name.Contains("Side") || e.StylusButton.Name.Contains("Secondary"))
             {
                 _isBarrelButtonPressed = true;
 
-                // Detect double tap on barrel button
                 if ((DateTime.Now - _lastBarrelButtonDownTime).TotalMilliseconds < 500)
                 {
-                    // Double tap detected, toggle eraser mode
                     if (_currentMode == CustomInkInputProcessingMode.Erasing)
                     {
                         SetInputMode(_previousMode);
@@ -167,15 +234,13 @@ namespace WindowsNotesApp.Controls
                         _previousMode = _currentMode;
                         SetInputMode(CustomInkInputProcessingMode.Erasing);
                     }
-                    _lastBarrelButtonDownTime = DateTime.MinValue; // Reset
+                    _lastBarrelButtonDownTime = DateTime.MinValue;
                 }
                 else
                 {
                     _lastBarrelButtonDownTime = DateTime.Now;
                 }
 
-                // If we are currently drawing, we should probably stop, but InkCanvas handles this mostly.
-                // We will use this flag in StylusDown/Move to erase instead of draw.
                 if (InkCanvas.EditingMode != InkCanvasEditingMode.None)
                 {
                     InkCanvas.EditingMode = InkCanvasEditingMode.None;
@@ -185,27 +250,59 @@ namespace WindowsNotesApp.Controls
 
         private void InkCanvas_StylusButtonUp(object sender, StylusButtonEventArgs e)
         {
-            if (e.StylusButton.Guid == StylusPointProperties.BarrelButton.Id)
+            bool isSideButton = false;
+            foreach (var guid in SideButtonGuids)
+            {
+                if (e.StylusButton.Guid == guid)
+                {
+                    isSideButton = true;
+                    break;
+                }
+            }
+
+            if (isSideButton || e.StylusButton.Name.Contains("Barrel") || e.StylusButton.Name.Contains("Side") || e.StylusButton.Name.Contains("Secondary"))
             {
                 _isBarrelButtonPressed = false;
-                SetInputMode(_currentMode); // Restore InkCanvas.EditingMode based on current mode
+                SetInputMode(_currentMode);
             }
         }
 
         private void InkCanvas_StylusDown(object sender, StylusDownEventArgs e)
         {
-            if (e.Inverted || _isBarrelButtonPressed || _currentMode == CustomInkInputProcessingMode.Erasing)
+            bool shouldErase = e.Inverted || _isStylusInverted
+                || _isBarrelButtonPressed
+                || _currentMode == CustomInkInputProcessingMode.Erasing;
+
+            Console.WriteLine($"[PdfPageControl] StylusDown: Inverted={e.Inverted}, _isStylusInverted={_isStylusInverted}, barrel={_isBarrelButtonPressed}, mode={_currentMode}, shouldErase={shouldErase}, device={e.StylusDevice?.Name}");
+
+            if (shouldErase)
             {
                 _isErasing = true;
+                // Ensure InkCanvas doesn't draw while we're erasing
+                if (InkCanvas.EditingMode != InkCanvasEditingMode.None)
+                    InkCanvas.EditingMode = InkCanvasEditingMode.None;
+
+                // Show eraser indicator at contact point
+                EraserIndicator.Visibility = Visibility.Visible;
+                InkCanvas.Cursor = Cursors.None;
+                UpdateEraserIndicatorPosition(e.GetPosition(PageGrid));
+
                 _erasePoints = e.GetStylusPoints(InkCanvas);
                 EraseStrokesAtPoints(_erasePoints);
+                e.Handled = true;
             }
         }
 
         private void InkCanvas_StylusMove(object sender, StylusEventArgs e)
         {
-            if (_isErasing && (e.Inverted || _isBarrelButtonPressed || _currentMode == CustomInkInputProcessingMode.Erasing))
+            bool shouldErase = _isErasing
+                && (e.StylusDevice?.Inverted == true || _isStylusInverted
+                    || _isBarrelButtonPressed
+                    || _currentMode == CustomInkInputProcessingMode.Erasing);
+
+            if (shouldErase)
             {
+                UpdateEraserIndicatorPosition(e.GetPosition(PageGrid));
                 var newPoints = e.GetStylusPoints(InkCanvas);
                 EraseStrokesAtPoints(newPoints);
             }
@@ -217,6 +314,14 @@ namespace WindowsNotesApp.Controls
             {
                 _isErasing = false;
                 _erasePoints = null;
+
+                // If the pen is still inverted (hovering after lift-off), keep
+                // showing the eraser indicator.  Otherwise restore the mode.
+                if (!_isStylusInverted && _currentMode != CustomInkInputProcessingMode.Erasing)
+                {
+                    EraserIndicator.Visibility = Visibility.Collapsed;
+                    SetInputMode(_currentMode);
+                }
             }
         }
 

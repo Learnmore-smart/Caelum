@@ -302,7 +302,12 @@ namespace WindowsNotesApp.Services
 
         public async Task<byte[]> RenderPagePngBytesAsync(int pageIndex, CancellationToken cancellationToken = default)
         {
-            System.Diagnostics.Debug.WriteLine($"RenderPagePngBytesAsync: start for page {pageIndex}");
+            return await RenderPagePngBytesAsync(pageIndex, 1.0, cancellationToken);
+        }
+
+        public async Task<byte[]> RenderPagePngBytesAsync(int pageIndex, double dpiScale, CancellationToken cancellationToken = default)
+        {
+            System.Diagnostics.Debug.WriteLine($"RenderPagePngBytesAsync: start for page {pageIndex}, dpiScale={dpiScale}");
 
             if (_pdfDocument == null)
             {
@@ -332,13 +337,13 @@ namespace WindowsNotesApp.Services
                 }
 
                 System.Diagnostics.Debug.WriteLine($"RenderPagePngBytesAsync: getting page {pageIndex}");
-                const int renderDpi = 192;
+                int renderDpi = (int)(192 * Math.Max(dpiScale, 1.0));
                 var size = _pdfDocument.PageSizes[pageIndex];
                 int width = (int)(size.Width * renderDpi / 72.0);
                 int height = (int)(size.Height * renderDpi / 72.0);
 
                 System.Diagnostics.Debug.WriteLine($"RenderPagePngBytesAsync: page {pageIndex} size: {width}x{height}");
-                
+
                 using (var image = _pdfDocument.Render(pageIndex, width, height, renderDpi, renderDpi, PdfRenderFlags.Annotations))
                 {
                     using (var ms = new MemoryStream())

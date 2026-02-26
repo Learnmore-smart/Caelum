@@ -63,97 +63,20 @@
     </Page.Resources>
 
     <Grid>
-        <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="*"/>
-        </Grid.RowDefinitions>
-
-        <!-- Toolbar - frosted glass -->
-        <Border Grid.Row="0" Padding="8,6" CornerRadius="0,0,12,12">
-            <Border.Background>
-                <SolidColorBrush Color="White" Opacity="0.78"/>
-            </Border.Background>
-            <Border.Effect>
-                <DropShadowEffect BlurRadius="10" ShadowDepth="2" Opacity="0.06" Color="#000"/>
-            </Border.Effect>
-            <Grid Height="42">
-                <!-- Back button -->
-                <Button x:Name="BackButton" Click="Back_Click"
-                        Style="{StaticResource ToolbarButtonStyle}"
-                        HorizontalAlignment="Left">
-                    <TextBlock Text="&#xE72B;" FontFamily="Segoe MDL2 Assets" FontSize="18" Foreground="#444"/>
-                </Button>
-
-                <!-- Centered tool buttons -->
-                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
-                    <!-- Undo -->
-                    <Button x:Name="UndoButton" Click="UndoButton_Click"
-                            Style="{StaticResource ToolbarButtonStyle}"
-                            Width="44" Height="38" Margin="3,0" ToolTip="Undo (Ctrl+Z)" IsEnabled="False">
-                        <TextBlock Text="&#xE7A7;" FontFamily="Segoe MDL2 Assets" FontSize="18" Foreground="#555"/>
-                    </Button>
-
-                    <!-- Redo -->
-                    <Button x:Name="RedoButton" Click="RedoButton_Click"
-                            Style="{StaticResource ToolbarButtonStyle}"
-                            Width="44" Height="38" Margin="3,0,6,0" ToolTip="Redo (Ctrl+Y)" IsEnabled="False">
-                        <TextBlock Text="&#xE7A6;" FontFamily="Segoe MDL2 Assets" FontSize="18" Foreground="#555"/>
-                    </Button>
-
-                    <!-- Separator -->
-                    <Border Width="1" Background="#18000000" Margin="0,8,6,8"/>
-
-                    <!-- Pen -->
-                    <Button x:Name="PenToolButton" Click="PenToolButton_Click"
-                            Style="{StaticResource ToolbarButtonStyle}"
-                            Width="44" Height="38" Margin="3,0">
-                        <TextBlock x:Name="PenIcon" Text="&#xED63;" FontFamily="Segoe MDL2 Assets" FontSize="20" Foreground="#333"/>
-                    </Button>
-
-                    <!-- Highlighter (uses Segoe MDL2 marker icon) -->
-                    <Button x:Name="HighlighterToolButton" Click="HighlighterToolButton_Click"
-                            Style="{StaticResource ToolbarButtonStyle}"
-                            Width="44" Height="38" Margin="3,0">
-                        <TextBlock x:Name="HighlighterIcon" Text="&#xE7E6;" FontFamily="Segoe MDL2 Assets" FontSize="20" Foreground="#F59E0B"/>
-                    </Button>
-
-                    <!-- Eraser -->
-                    <Button x:Name="EraserToolButton" Click="EraserToolButton_Click"
-                            Style="{StaticResource ToolbarButtonStyle}"
-                            Width="44" Height="38" Margin="3,0">
-                        <TextBlock x:Name="EraserIcon" Text="&#xE75C;" FontFamily="Segoe MDL2 Assets" FontSize="20" Foreground="#555"/>
-                    </Button>
-
-                    <!-- Separator -->
-                    <Border Width="1" Background="#18000000" Margin="6,8"/>
-
-                    <!-- Text -->
-                    <Button x:Name="TextToolButton" Click="TextToolButton_Click"
-                            Style="{StaticResource ToolbarButtonStyle}"
-                            Width="44" Height="38" Margin="3,0">
-                        <TextBlock Text="A" FontSize="18" FontWeight="Bold" Foreground="#555"/>
-                    </Button>
-                </StackPanel>
-
-                <!-- Save button -->
-                <Button x:Name="SavePdfButton" Click="SavePdf_Click"
-                        Style="{StaticResource ToolbarButtonStyle}"
-                        HorizontalAlignment="Right">
-                    <TextBlock Text="&#xE74E;" FontFamily="Segoe MDL2 Assets" FontSize="18" Foreground="#444"/>
-                </Button>
-            </Grid>
-        </Border>
-
-        <!-- PDF Pages Container -->
-        <ScrollViewer x:Name="PdfScrollViewer" Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
+        <!-- PDF Pages Container (full area) -->
+        <ScrollViewer x:Name="PdfScrollViewer" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
                       Background="#EAEAEA"
                       Style="{StaticResource SleekScrollViewer}"
-                      PanningMode="Both"
+                      PanningMode="None"
                       Stylus.IsFlicksEnabled="False"
+                      IsManipulationEnabled="True"
                       PreviewStylusDown="PdfScrollViewer_PreviewStylusDown"
                       PreviewStylusMove="PdfScrollViewer_PreviewStylusMove"
                       PreviewStylusUp="PdfScrollViewer_PreviewStylusUp"
-                      PreviewMouseWheel="PdfScrollViewer_PreviewMouseWheel">
+                      PreviewMouseWheel="PdfScrollViewer_PreviewMouseWheel"
+                      ManipulationStarting="PdfScrollViewer_ManipulationStarting"
+                      ManipulationDelta="PdfScrollViewer_ManipulationDelta"
+                      ManipulationInertiaStarting="PdfScrollViewer_ManipulationInertiaStarting">
             <StackPanel x:Name="PagesContainer" Margin="32,20,32,32">
                 <StackPanel.LayoutTransform>
                     <ScaleTransform x:Name="PagesZoomTransform" ScaleX="1" ScaleY="1"/>
@@ -161,8 +84,108 @@
             </StackPanel>
         </ScrollViewer>
 
+        <!-- Floating Toolbar -->
+        <Border x:Name="ToolbarBorder" HorizontalAlignment="Center" VerticalAlignment="Top"
+                Margin="0,12,0,0" Padding="8,4" CornerRadius="14"
+                Background="White">
+            <Border.Effect>
+                <DropShadowEffect BlurRadius="18" ShadowDepth="3" Opacity="0.12" Color="#000"/>
+            </Border.Effect>
+            <StackPanel Orientation="Horizontal" Height="42">
+                <!-- Undo -->
+                <Button x:Name="UndoButton" Click="UndoButton_Click"
+                        Style="{StaticResource ToolbarButtonStyle}"
+                        Width="42" Height="36" Margin="2,0" ToolTip="Undo (Ctrl+Z)" IsEnabled="False">
+                    <TextBlock Text="&#xE7A7;" FontFamily="Segoe MDL2 Assets" FontSize="17" Foreground="#555"/>
+                </Button>
+
+                <!-- Redo -->
+                <Button x:Name="RedoButton" Click="RedoButton_Click"
+                        Style="{StaticResource ToolbarButtonStyle}"
+                        Width="42" Height="36" Margin="2,0" ToolTip="Redo (Ctrl+Y)" IsEnabled="False">
+                    <TextBlock Text="&#xE7A6;" FontFamily="Segoe MDL2 Assets" FontSize="17" Foreground="#555"/>
+                </Button>
+
+                <!-- Separator -->
+                <Border Width="1" Background="#18000000" Margin="4,8"/>
+
+                <!-- Pen -->
+                <Button x:Name="PenToolButton" Click="PenToolButton_Click"
+                        Style="{StaticResource ToolbarButtonStyle}"
+                        Width="42" Height="36" Margin="2,0">
+                    <TextBlock x:Name="PenIcon" Text="&#xED63;" FontFamily="Segoe MDL2 Assets" FontSize="19" Foreground="#333"/>
+                </Button>
+
+                <!-- Highlighter -->
+                <Button x:Name="HighlighterToolButton" Click="HighlighterToolButton_Click"
+                        Style="{StaticResource ToolbarButtonStyle}"
+                        Width="42" Height="36" Margin="2,0">
+                    <TextBlock x:Name="HighlighterIcon" Text="&#xE7E6;" FontFamily="Segoe MDL2 Assets" FontSize="19" Foreground="#F59E0B"/>
+                </Button>
+
+                <!-- Eraser -->
+                <Button x:Name="EraserToolButton" Click="EraserToolButton_Click"
+                        Style="{StaticResource ToolbarButtonStyle}"
+                        Width="42" Height="36" Margin="2,0">
+                    <TextBlock x:Name="EraserIcon" Text="&#xE75C;" FontFamily="Segoe MDL2 Assets" FontSize="19" Foreground="#555"/>
+                </Button>
+
+                <!-- Separator -->
+                <Border Width="1" Background="#18000000" Margin="4,8"/>
+
+                <!-- Text -->
+                <Button x:Name="TextToolButton" Click="TextToolButton_Click"
+                        Style="{StaticResource ToolbarButtonStyle}"
+                        Width="42" Height="36" Margin="2,0">
+                    <TextBlock Text="A" FontSize="17" FontWeight="Bold" Foreground="#555"/>
+                </Button>
+
+                <!-- Separator -->
+                <Border Width="1" Background="#18000000" Margin="4,8"/>
+
+                <!-- Save -->
+                <Button x:Name="SavePdfButton" Click="SavePdf_Click"
+                        Style="{StaticResource ToolbarButtonStyle}"
+                        Width="42" Height="36" Margin="2,0" ToolTip="Save">
+                    <TextBlock Text="&#xE74E;" FontFamily="Segoe MDL2 Assets" FontSize="17" Foreground="#444"/>
+                </Button>
+
+                <!-- Separator -->
+                <Border Width="1" Background="#18000000" Margin="4,8"/>
+
+                <!-- Zoom Out -->
+                <Button x:Name="ZoomOutButton" Click="ZoomOutButton_Click"
+                        Style="{StaticResource ToolbarButtonStyle}"
+                        Width="36" Height="36" Margin="2,0" ToolTip="Zoom Out">
+                    <TextBlock Text="&#xE738;" FontFamily="Segoe MDL2 Assets" FontSize="14" Foreground="#555"/>
+                </Button>
+
+                <!-- Zoom Percentage (click to edit) -->
+                <Grid Width="46" Height="36" Margin="0,0,0,0">
+                    <TextBlock x:Name="ZoomLabel" Text="100%" FontSize="12" Foreground="#555"
+                               VerticalAlignment="Center" HorizontalAlignment="Center" TextAlignment="Center"
+                               MouseLeftButtonDown="ZoomLabel_MouseLeftButtonDown"
+                               Cursor="Hand" ToolTip="Click to set zoom"/>
+                    <TextBox x:Name="ZoomTextBox" FontSize="12" Foreground="#333" Background="White"
+                             VerticalAlignment="Center" HorizontalAlignment="Center"
+                             Width="42" Height="22" TextAlignment="Center" Padding="2,1"
+                             BorderThickness="1" BorderBrush="#0078D4"
+                             Visibility="Collapsed"
+                             KeyDown="ZoomTextBox_KeyDown"
+                             LostFocus="ZoomTextBox_LostFocus"/>
+                </Grid>
+
+                <!-- Zoom In -->
+                <Button x:Name="ZoomInButton" Click="ZoomInButton_Click"
+                        Style="{StaticResource ToolbarButtonStyle}"
+                        Width="36" Height="36" Margin="2,0" ToolTip="Zoom In">
+                    <TextBlock Text="&#xE710;" FontFamily="Segoe MDL2 Assets" FontSize="14" Foreground="#555"/>
+                </Button>
+            </StackPanel>
+        </Border>
+
         <!-- Loading Overlay -->
-        <Grid x:Name="LoadingOverlay" Grid.RowSpan="2"
+        <Grid x:Name="LoadingOverlay"
               Background="#60000000" Visibility="Collapsed">
             <Border CornerRadius="14" Padding="28,20" HorizontalAlignment="Center" VerticalAlignment="Center">
                 <Border.Background>

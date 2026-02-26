@@ -1,138 +1,184 @@
 using System;
-using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Interop;
 
 namespace WindowsNotesApp.Services
 {
-    public class HuaweiPenService
+    /// <summary>
+    /// Lightweight service for Huawei M-Pencil eraser toggle on MateBook devices.
+    ///
+    /// Signal paths handled:
+    ///   1. Win+F19 / Win+F20 global hotkeys – emitted by Huawei PC Manager
+    ///      (AcAppDaemon.exe) or community tools like MateBook-E-Pen when the
+    ///      user double-clicks the M-Pencil.
+    ///      https://github.com/eiyooooo/MateBook-E-Pen
+    ///
+    ///   2. Standard Windows Ink pen inversion (StylusDevice.Inverted / IsEraser)
+    ///      is handled directly by PdfPageControl – nothing extra needed here.
+    ///
+    /// NOTE: We intentionally do NOT register for Raw HID Input (WM_INPUT +
+    /// RIDEV_INPUTSINK).  Doing so floods the WPF message queue with thousands
+    /// of digitizer messages per second from every touch/pen device on the
+    /// system, causing multi-second UI lag.  The hotkey path is the reliable,
+    /// zero-overhead signal for the M-Pencil double-click.
+    /// </summary>
+    public class HuaweiPenService : IDisposable
     {
-        // Events
+        /// <summary>
+        /// Raised when the user double-clicks the pen to toggle eraser mode.
+        /// </summary>
         public event EventHandler ToolToggleRequested;
 
         private IntPtr _hwnd;
-        private const int WM_INPUT = 0x00FF;
-        private const int RID_INPUT = 0x10000003;
-        private const int RIM_TYPEHID = 2;
+        private HwndSource _hwndSource;
+        private bool _isInitialized;
+        private bool _disposed;
 
-        // Huawei M-Pencil 3 / Standard Digitizer Usage
-        private const ushort HID_USAGE_PAGE_DIGITIZER = 0x0D;
-        private const ushort HID_USAGE_PEN = 0x02;
+        // ── Win32 constants ──────────────────────────────────────────────
+        private const int WM_HOTKEY = 0x0312;
 
-        // P/Invoke
-        [DllImport("User32.dll")]
-        static extern bool RegisterRawInputDevices(RAWINPUTDEVICE[] pRawInputDevices, uint uiNumDevices, uint cbSize);
+        private const int HOTKEY_ID_WIN_F19 = 9001;
+        private const int HOTKEY_ID_WIN_F20 = 9002;
 
-        [DllImport("User32.dll")]
-        static extern uint GetRawInputData(IntPtr hRawInput, uint uiCommand, IntPtr pData, ref uint pcbSize, uint cbSizeHeader);
+        private const uint VK_F19 = 0x82;
+        private const uint VK_F20 = 0x83;
+        private const uint MOD_WIN = 0x0008;
+        private const uint MOD_NOREPEAT = 0x4000;
 
-        [DllImport("comctl32.dll", SetLastError = true)]
-        static extern bool SetWindowSubclass(IntPtr hWnd, SubclassProc pfnSubclass, uint uIdSubclass, IntPtr dwRefData);
+        // ── P/Invoke ─────────────────────────────────────────────────────
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
 
-        [DllImport("comctl32.dll", SetLastError = true)]
-        static extern bool RemoveWindowSubclass(IntPtr hWnd, SubclassProc pfnSubclass, uint uIdSubclass);
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern bool UnregisterHotKey(IntPtr hWnd, int id);
 
-        [DllImport("comctl32.dll", SetLastError = true)]
-        static extern IntPtr DefSubclassProc(IntPtr hWnd, uint uMsg, IntPtr wParam, IntPtr lParam);
-
-        private delegate IntPtr SubclassProc(IntPtr hWnd, uint uMsg, IntPtr wParam, IntPtr lParam, uint uIdSubclass, IntPtr dwRefData);
-
-        private SubclassProc _subclassProc;
-
-        [StructLayout(LayoutKind.Sequential)]
-        struct RAWINPUTDEVICE
-        {
-            public ushort usUsagePage;
-            public ushort usUsage;
-            public uint dwFlags;
-            public IntPtr hwndTarget;
-        }
-
-        [StructLayout(LayoutKind.Sequential)]
-        struct RAWINPUTHEADER
-        {
-            public uint dwType;
-            public uint dwSize;
-            public IntPtr hDevice;
-            public IntPtr wParam;
-        }
-
-        [StructLayout(LayoutKind.Sequential)]
-        struct RAWINPUT
-        {
-            public RAWINPUTHEADER header;
-            public RAWHID hid; // We only care about HID here, simplified union
-        }
-
-        [StructLayout(LayoutKind.Sequential)]
-        struct RAWHID
-        {
-            public uint dwSizeHid;
-            public uint dwCount;
-            // byte bRawData[1] // Variable length
-        }
+        // ── Public API ───────────────────────────────────────────────────
 
         public void Initialize(Window window)
         {
+            if (_isInitialized)
+            {
+                Log("Initialize called but already initialized, skipping");
+                return;
+            }
+
+            if (window == null)
+            {
+                Log("ERROR: Initialize called with null window!");
+                return;
+            }
+
+            Log($"Initialize called, window type={window.GetType().Name}");
+
             var helper = new WindowInteropHelper(window);
             _hwnd = helper.Handle;
 
-            // Register for Raw Input (Digitizer)
-            var rid = new RAWINPUTDEVICE[1];
-            rid[0].usUsagePage = HID_USAGE_PAGE_DIGITIZER;
-            rid[0].usUsage = HID_USAGE_PEN;
-            rid[0].dwFlags = 0x00000100; // RIDEV_INPUTSINK
-            rid[0].hwndTarget = _hwnd;
-
-            if (!RegisterRawInputDevices(rid, (uint)rid.Length, (uint)Marshal.SizeOf(typeof(RAWINPUTDEVICE))))
+            if (_hwnd == IntPtr.Zero)
             {
-                System.Diagnostics.Debug.WriteLine("Failed to register raw input devices.");
-            }
-
-            // Subclass window to intercept WM_INPUT
-            _subclassProc = new SubclassProc(WndProc);
-            SetWindowSubclass(_hwnd, _subclassProc, 101, IntPtr.Zero);
-        }
-
-        private IntPtr WndProc(IntPtr hWnd, uint uMsg, IntPtr wParam, IntPtr lParam, uint uIdSubclass, IntPtr dwRefData)
-        {
-            if (uMsg == WM_INPUT)
-            {
-                ProcessRawInput(lParam);
-            }
-            return DefSubclassProc(hWnd, uMsg, wParam, lParam);
-        }
-
-        private void ProcessRawInput(IntPtr hRawInput)
-        {
-            uint dwSize = 0;
-            GetRawInputData(hRawInput, RID_INPUT, IntPtr.Zero, ref dwSize, (uint)Marshal.SizeOf(typeof(RAWINPUTHEADER)));
-
-            if (dwSize == 0) return;
-
-            IntPtr buffer = Marshal.AllocHGlobal((int)dwSize);
-            try
-            {
-                if (GetRawInputData(hRawInput, RID_INPUT, buffer, ref dwSize, (uint)Marshal.SizeOf(typeof(RAWINPUTHEADER))) == dwSize)
+                Log("HWND is zero – deferring to SourceInitialized");
+                window.SourceInitialized += (s, e) =>
                 {
-                    RAWINPUT raw = Marshal.PtrToStructure<RAWINPUT>(buffer);
-                    if (raw.header.dwType == RIM_TYPEHID)
-                    {
-                        // Logic to detect double tap.
-                        // Placeholder.
-                    }
+                    _hwnd = new WindowInteropHelper(window).Handle;
+                    Log($"SourceInitialized fired, HWND=0x{_hwnd:X}");
+                    DoInitialize();
+                };
+            }
+            else
+            {
+                Log($"HWND already available: 0x{_hwnd:X}");
+                DoInitialize();
+            }
+
+            _isInitialized = true;
+        }
+
+        public void SimulateToggle()
+        {
+            OnToolToggleRequested();
+        }
+
+        // ── Initialization ───────────────────────────────────────────────
+
+        private void DoInitialize()
+        {
+            // Register Win+F19 and Win+F20 hotkeys
+            // MOD_NOREPEAT prevents repeated WM_HOTKEY while held
+            bool f19 = RegisterHotKey(_hwnd, HOTKEY_ID_WIN_F19, MOD_WIN | MOD_NOREPEAT, VK_F19);
+            int f19err = f19 ? 0 : Marshal.GetLastWin32Error();
+            bool f20 = RegisterHotKey(_hwnd, HOTKEY_ID_WIN_F20, MOD_WIN | MOD_NOREPEAT, VK_F20);
+            int f20err = f20 ? 0 : Marshal.GetLastWin32Error();
+
+            Log($"RegisterHotKey Win+F19: {(f19 ? "OK" : $"FAILED err={f19err}")}");
+            Log($"RegisterHotKey Win+F20: {(f20 ? "OK" : $"FAILED err={f20err}")}");
+
+            // Use HwndSource.AddHook – the proper WPF way to intercept window messages.
+            _hwndSource = HwndSource.FromHwnd(_hwnd);
+            if (_hwndSource != null)
+            {
+                _hwndSource.AddHook(WndProc);
+                Log("HwndSource.AddHook installed successfully");
+            }
+            else
+            {
+                Log("ERROR: HwndSource.FromHwnd returned null! Message hook NOT installed.");
+            }
+
+            Log($"Initialization complete – HWND=0x{_hwnd:X}");
+        }
+
+        // ── Message handler (only fires for WM_HOTKEY, zero overhead) ────
+
+        private IntPtr WndProc(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
+        {
+            if (msg == WM_HOTKEY)
+            {
+                int hotkeyId = wParam.ToInt32();
+                Log($"WM_HOTKEY received, id={hotkeyId}");
+                if (hotkeyId == HOTKEY_ID_WIN_F19 || hotkeyId == HOTKEY_ID_WIN_F20)
+                {
+                    string name = hotkeyId == HOTKEY_ID_WIN_F19 ? "Win+F19" : "Win+F20";
+                    Log($">>> MATCHED {name} – firing ToolToggleRequested");
+                    OnToolToggleRequested();
+                    handled = true;
+                }
+                else
+                {
+                    Log($"Hotkey id={hotkeyId} does not match ours (9001/9002), ignoring");
                 }
             }
-            finally
-            {
-                Marshal.FreeHGlobal(buffer);
-            }
+
+            return IntPtr.Zero;
         }
 
-        public void SimulateDoubleTap()
+        private void OnToolToggleRequested()
         {
-             ToolToggleRequested?.Invoke(this, EventArgs.Empty);
+            int subscribers = ToolToggleRequested?.GetInvocationList().Length ?? 0;
+            Log($"OnToolToggleRequested – {subscribers} subscriber(s)");
+            ToolToggleRequested?.Invoke(this, EventArgs.Empty);
+        }
+
+        private static void Log(string message)
+        {
+            string line = $"[HuaweiPen] {DateTime.Now:HH:mm:ss.fff} {message}";
+            Console.WriteLine(line);
+            System.Diagnostics.Debug.WriteLine(line);
+        }
+
+        // ── Cleanup ──────────────────────────────────────────────────────
+
+        public void Dispose()
+        {
+            if (_disposed) return;
+            _disposed = true;
+
+            _hwndSource?.RemoveHook(WndProc);
+
+            if (_hwnd != IntPtr.Zero)
+            {
+                try { UnregisterHotKey(_hwnd, HOTKEY_ID_WIN_F19); } catch { }
+                try { UnregisterHotKey(_hwnd, HOTKEY_ID_WIN_F20); } catch { }
+            }
         }
     }
 }

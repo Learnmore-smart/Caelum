@@ -103,6 +103,7 @@
     <Grid Background="#F3F3F3">
         <Grid.RowDefinitions>
             <RowDefinition Height="40"/>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
 
@@ -173,7 +174,7 @@
                             </Button.ContextMenu>
                         </Button>
                     </StackPanel>
-                    
+
                     <!-- Window Buttons -->
                     <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
                         <Button x:Name="MinimizeButton" Click="MinimizeButton_Click" Style="{StaticResource TitleBarButtonStyle}" WindowChrome.IsHitTestVisibleInChrome="True">
@@ -190,13 +191,27 @@
             </Grid>
         </Border>
 
-        <!-- Content Area -->
-        <Border Grid.Row="1">
-            <Frame x:Name="RootFrame" NavigationUIVisibility="Hidden" Navigated="RootFrame_Navigated"/>
+        <!-- Tab Bar -->
+        <Border Grid.Row="1" Background="#E8E8E8" Padding="4,0,0,0">
+            <ScrollViewer Height="34" HorizontalScrollBarVisibility="Hidden" VerticalScrollBarVisibility="Disabled">
+                <StackPanel Orientation="Horizontal">
+                    <StackPanel x:Name="TabBar" Orientation="Horizontal"/>
+                    <!-- New tab button inline after tabs -->
+                    <Button x:Name="NewTabButton" Click="NewTab_Click" Style="{StaticResource NavButtonStyle}"
+                            VerticalAlignment="Center"
+                            Width="28" Height="26" Margin="2,4,4,0"
+                            ToolTip="New Tab (Ctrl+T)">
+                        <TextBlock Text="&#xE710;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#555"/>
+                    </Button>
+                </StackPanel>
+            </ScrollViewer>
         </Border>
 
+        <!-- Content Area: hosts all tab frames stacked -->
+        <Grid x:Name="TabContentArea" Grid.Row="2"/>
+
         <!-- Toast Notification -->
-        <Border x:Name="ToastBorder" Grid.Row="1" HorizontalAlignment="Center" VerticalAlignment="Bottom"
+        <Border x:Name="ToastBorder" Grid.Row="2" HorizontalAlignment="Center" VerticalAlignment="Bottom"
                 Margin="0,0,0,28" Visibility="Collapsed" Opacity="0" IsHitTestVisible="False"
                 CornerRadius="10" Padding="20,10">
             <Border.Background>

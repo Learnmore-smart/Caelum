@@ -415,7 +415,10 @@ namespace WindowsNotesApp.Pages
             {
                 var filePath = picker.FileName;
                 await AddToRecentFilesAsync(filePath);
-                NavigationService?.Navigate(new EditorPage(filePath));
+                if (Window.GetWindow(this) is MainWindow mw)
+                    mw.NavigateActiveTabToFile(filePath);
+                else
+                    NavigationService?.Navigate(new EditorPage(filePath));
             }
         }
 
@@ -467,7 +470,10 @@ namespace WindowsNotesApp.Pages
                     await ShowDialogAsync("Error", "File not found.");
                     return;
                 }
-                NavigationService?.Navigate(new EditorPage(tile.Path));
+                if (Window.GetWindow(this) is MainWindow mw)
+                    mw.NavigateActiveTabToFile(tile.Path);
+                else
+                    NavigationService?.Navigate(new EditorPage(tile.Path));
             }
             catch (Exception)
             {
@@ -494,6 +500,57 @@ namespace WindowsNotesApp.Pages
         {
             MessageBox.Show(content, title, MessageBoxButton.OK, MessageBoxImage.Information);
             await Task.CompletedTask;
+        }
+
+        // ─── Smooth Scrolling ────────────────────────────
+        private double _targetVerticalOffset;
+        private bool _smoothScrollInitialized;
+        private double _scrollAnimationTarget;
+        private double _scrollAnimationStart;
+        private DateTime _scrollAnimationStartTime;
+        private TimeSpan _scrollAnimationDuration;
+        private bool _isScrollAnimating;
+
+        private void HomeScrollViewer_PreviewMouseWheel(object sender, MouseWheelEventArgs e)
+        {
+            e.Handled = true;
+
+            if (!_smoothScrollInitialized)
+            {
+                _targetVerticalOffset = HomeScrollViewer.VerticalOffset;
+                _smoothScrollInitialized = true;
+            }
+
+            double scrollAmount = -e.Delta * 0.8;
+            _targetVerticalOffset = Math.Max(0,
+                Math.Min(HomeScrollViewer.ScrollableHeight, _targetVerticalOffset + scrollAmount));
+
+            _scrollAnimationTarget = _targetVerticalOffset;
+            _scrollAnimationStart = HomeScrollViewer.VerticalOffset;
+            _scrollAnimationStartTime = DateTime.UtcNow;
+            _scrollAnimationDuration = TimeSpan.FromMilliseconds(180);
+
+            if (!_isScrollAnimating)
+            {
+                _isScrollAnimating = true;
+                System.Windows.Media.CompositionTarget.Rendering += HomeCompositionTarget_Rendering;
+            }
+        }
+
+        private void HomeCompositionTarget_Rendering(object sender, EventArgs e)
+        {
+            var elapsed = DateTime.UtcNow - _scrollAnimationStartTime;
+            double progress = Math.Min(1.0, elapsed.TotalMilliseconds / _scrollAnimationDuration.TotalMilliseconds);
+            double easedProgress = 1.0 - Math.Pow(1.0 - progress, 3);
+
+            double currentOffset = _scrollAnimationStart + (_scrollAnimationTarget - _scrollAnimationStart) * easedProgress;
+            HomeScrollViewer.ScrollToVerticalOffset(currentOffset);
+
+            if (progress >= 1.0)
+            {
+                _isScrollAnimating = false;
+                System.Windows.Media.CompositionTarget.Rendering -= HomeCompositionTarget_Rendering;
+            }
         }
     }
 
