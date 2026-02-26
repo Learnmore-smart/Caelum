@@ -39,12 +39,6 @@
                                 </Grid.RenderTransform>
                                 <Viewbox Stretch="Uniform" MaxWidth="90" MaxHeight="120" VerticalAlignment="Center" HorizontalAlignment="Center">
                                     <Grid Width="90" Height="120">
-                                        <!-- Blur/Glow effect on hover -->
-                                        <Rectangle x:Name="GlowRect" Fill="#FF1DA1F2" RadiusX="6" RadiusY="6" Opacity="0">
-                                            <Rectangle.Effect>
-                                                <BlurEffect Radius="15"/>
-                                            </Rectangle.Effect>
-                                        </Rectangle>
                                         <Rectangle x:Name="BgRect" Fill="Transparent" RadiusX="5" RadiusY="5"/>
                                         <Rectangle Stroke="#1DA1F2" StrokeThickness="2" StrokeDashArray="6,4" RadiusX="5" RadiusY="5"/>
                                         <TextBlock Text="&#xE710;" FontFamily="Segoe MDL2 Assets" FontSize="40" Foreground="#1DA1F2" HorizontalAlignment="Center" VerticalAlignment="Center"/>
@@ -66,7 +60,6 @@
                                                 <CubicEase EasingMode="EaseOut"/>
                                             </DoubleAnimation.EasingFunction>
                                         </DoubleAnimation>
-                                        <DoubleAnimation Storyboard.TargetName="GlowRect" Storyboard.TargetProperty="Opacity" To="0.25" Duration="0:0:0.2"/>
                                     </Storyboard>
                                 </BeginStoryboard>
                             </EventTrigger>
@@ -83,7 +76,6 @@
                                                 <CubicEase EasingMode="EaseOut"/>
                                             </DoubleAnimation.EasingFunction>
                                         </DoubleAnimation>
-                                        <DoubleAnimation Storyboard.TargetName="GlowRect" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.3"/>
                                     </Storyboard>
                                 </BeginStoryboard>
                             </EventTrigger>

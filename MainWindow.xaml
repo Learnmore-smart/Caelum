@@ -8,7 +8,7 @@
     Background="Transparent">
 
     <WindowChrome.WindowChrome>
-        <WindowChrome CaptionHeight="40" GlassFrameThickness="-1" UseAeroCaptionButtons="True" />
+        <WindowChrome CaptionHeight="40" GlassFrameThickness="-1" UseAeroCaptionButtons="False" />
     </WindowChrome.WindowChrome>
 
     <Window.Resources>
@@ -100,7 +100,7 @@
         </Style>
     </Window.Resources>
 
-    <Grid Background="Transparent">
+    <Grid Background="#F3F3F3">
         <Grid.RowDefinitions>
             <RowDefinition Height="40"/>
             <RowDefinition Height="*"/>
@@ -123,60 +123,75 @@
                     </Button>
                 </StackPanel>
 
-                <!-- Right: Toolbar items -->
-                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,0,140,0">
-                    <Border Background="#10000000" CornerRadius="6" Margin="0,0,8,0" Height="28" VerticalAlignment="Center" WindowChrome.IsHitTestVisibleInChrome="True">
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="Auto"/>
-                                <ColumnDefinition Width="120"/>
-                            </Grid.ColumnDefinitions>
-                            <TextBlock Text="&#xE721;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#555555" VerticalAlignment="Center" Margin="8,0,4,0"/>
-                            <TextBox x:Name="SearchBox" Grid.Column="1" Background="Transparent" BorderThickness="0" VerticalAlignment="Center" Foreground="#333" FontSize="12" TextChanged="SearchBox_TextChanged" />
-                            <TextBlock x:Name="SearchPlaceholder" Grid.Column="1" Text="搜索" Foreground="#888" FontSize="12" VerticalAlignment="Center" IsHitTestVisible="False" Margin="2,0,0,0">
-                                <TextBlock.Style>
-                                    <Style TargetType="TextBlock">
-                                        <Setter Property="Visibility" Value="Collapsed"/>
-                                        <Style.Triggers>
-                                            <DataTrigger Binding="{Binding Text.Length, ElementName=SearchBox}" Value="0">
-                                                <Setter Property="Visibility" Value="Visible"/>
-                                            </DataTrigger>
-                                        </Style.Triggers>
-                                    </Style>
-                                </TextBlock.Style>
-                            </TextBlock>
-                        </Grid>
-                    </Border>
-                    <Button x:Name="SelectButton" Click="SelectButton_Click" Style="{StaticResource ToolbarTextButtonStyle}" Margin="0,0,2,0" WindowChrome.IsHitTestVisibleInChrome="True">
-                        <StackPanel Orientation="Horizontal">
-                            <TextBlock Text="&#xE762;" FontFamily="Segoe MDL2 Assets" FontSize="13" Foreground="#555555" VerticalAlignment="Center"/>
-                            <TextBlock Text="选择" FontSize="12" Foreground="#555555" Margin="5,0,0,0" VerticalAlignment="Center"/>
-                        </StackPanel>
-                    </Button>
-                    <Button x:Name="SortButton" Click="SortButton_Click" Style="{StaticResource NavButtonStyle}" Margin="0,0,2,0" WindowChrome.IsHitTestVisibleInChrome="True">
-                        <TextBlock Text="&#xE8CB;" FontFamily="Segoe MDL2 Assets" FontSize="14" Foreground="#555555"/>
-                        <Button.ContextMenu>
-                            <ContextMenu>
-                                <MenuItem Header="Sort by Name" Click="SortByName_Click"/>
-                                <MenuItem Header="Sort by Date" Click="SortByDate_Click"/>
-                            </ContextMenu>
-                        </Button.ContextMenu>
-                    </Button>
-                    <Button x:Name="MoreButton" Click="MoreButton_Click" Style="{StaticResource NavButtonStyle}" Margin="0,0,8,0" WindowChrome.IsHitTestVisibleInChrome="True">
-                        <TextBlock Text="&#xE712;" FontFamily="Segoe MDL2 Assets" FontSize="14" Foreground="#555555"/>
-                        <Button.ContextMenu>
-                            <ContextMenu>
-                                <MenuItem Header="Settings" Click="Settings_Click"/>
-                                <MenuItem Header="About" Click="About_Click"/>
-                            </ContextMenu>
-                        </Button.ContextMenu>
-                    </Button>
-                </StackPanel>
+                <!-- Right: Toolbar items + Window Buttons -->
+                <Grid>
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,0,140,0">
+                        <Border Background="#10000000" CornerRadius="6" Margin="0,0,8,0" Height="28" VerticalAlignment="Center" WindowChrome.IsHitTestVisibleInChrome="True">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="120"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="&#xE721;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#555555" VerticalAlignment="Center" Margin="8,0,4,0"/>
+                                <TextBox x:Name="SearchBox" Grid.Column="1" Background="Transparent" BorderThickness="0" VerticalAlignment="Center" Foreground="#333" FontSize="12" TextChanged="SearchBox_TextChanged" />
+                                <TextBlock x:Name="SearchPlaceholder" Grid.Column="1" Text="搜索" Foreground="#888" FontSize="12" VerticalAlignment="Center" IsHitTestVisible="False" Margin="2,0,0,0">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding Text.Length, ElementName=SearchBox}" Value="0">
+                                                    <Setter Property="Visibility" Value="Visible"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                            </Grid>
+                        </Border>
+                        <Button x:Name="SelectButton" Click="SelectButton_Click" Style="{StaticResource ToolbarTextButtonStyle}" Margin="0,0,2,0" WindowChrome.IsHitTestVisibleInChrome="True">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="&#xE762;" FontFamily="Segoe MDL2 Assets" FontSize="13" Foreground="#555555" VerticalAlignment="Center"/>
+                                <TextBlock Text="选择" FontSize="12" Foreground="#555555" Margin="5,0,0,0" VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </Button>
+                        <Button x:Name="SortButton" Click="SortButton_Click" Style="{StaticResource NavButtonStyle}" Margin="0,0,2,0" WindowChrome.IsHitTestVisibleInChrome="True">
+                            <TextBlock Text="&#xE8CB;" FontFamily="Segoe MDL2 Assets" FontSize="14" Foreground="#555555"/>
+                            <Button.ContextMenu>
+                                <ContextMenu>
+                                    <MenuItem Header="Sort by Name" Click="SortByName_Click"/>
+                                    <MenuItem Header="Sort by Date" Click="SortByDate_Click"/>
+                                </ContextMenu>
+                            </Button.ContextMenu>
+                        </Button>
+                        <Button x:Name="MoreButton" Click="MoreButton_Click" Style="{StaticResource NavButtonStyle}" Margin="0,0,8,0" WindowChrome.IsHitTestVisibleInChrome="True">
+                            <TextBlock Text="&#xE712;" FontFamily="Segoe MDL2 Assets" FontSize="14" Foreground="#555555"/>
+                            <Button.ContextMenu>
+                                <ContextMenu>
+                                    <MenuItem Header="Settings" Click="Settings_Click"/>
+                                    <MenuItem Header="About" Click="About_Click"/>
+                                </ContextMenu>
+                            </Button.ContextMenu>
+                        </Button>
+                    </StackPanel>
+                    
+                    <!-- Window Buttons -->
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                        <Button x:Name="MinimizeButton" Click="MinimizeButton_Click" Style="{StaticResource TitleBarButtonStyle}" WindowChrome.IsHitTestVisibleInChrome="True">
+                            <TextBlock Text="&#xE921;" FontFamily="Segoe MDL2 Assets" FontSize="10" Foreground="#555555"/>
+                        </Button>
+                        <Button x:Name="MaximizeButton" Click="MaximizeButton_Click" Style="{StaticResource TitleBarButtonStyle}" WindowChrome.IsHitTestVisibleInChrome="True">
+                            <TextBlock x:Name="MaximizeIcon" Text="&#xE922;" FontFamily="Segoe MDL2 Assets" FontSize="10" Foreground="#555555"/>
+                        </Button>
+                        <Button x:Name="CloseButton" Click="CloseButton_Click" Style="{StaticResource CloseButtonStyle}" WindowChrome.IsHitTestVisibleInChrome="True">
+                            <TextBlock Text="&#xE8BB;" FontFamily="Segoe MDL2 Assets" FontSize="10" Foreground="#555555"/>
+                        </Button>
+                    </StackPanel>
+                </Grid>
             </Grid>
         </Border>
 
         <!-- Content Area -->
-        <Border Grid.Row="1" Background="Transparent">
+        <Border Grid.Row="1">
             <Frame x:Name="RootFrame" NavigationUIVisibility="Hidden" Navigated="RootFrame_Navigated"/>
         </Border>
 

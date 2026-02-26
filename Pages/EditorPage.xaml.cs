@@ -498,50 +498,59 @@ namespace WindowsNotesApp.Pages
         private void PenToolButton_Click(object sender, RoutedEventArgs e)
         {
             if (_isUpdatingToolState) return;
-            var btn = sender as ToggleButton;
-            if (btn?.IsChecked == true)
+            if (_currentTool == ToolType.Pen)
+            {
+                ActivateTool(ToolType.None);
+            }
+            else
             {
                 ActivateTool(ToolType.Pen);
                 _penPopup.PlacementTarget = PenToolButton;
                 _penPopup.IsOpen = true;
             }
-            else
-                ActivateTool(ToolType.None);
         }
 
         private void HighlighterToolButton_Click(object sender, RoutedEventArgs e)
         {
             if (_isUpdatingToolState) return;
-            var btn = sender as ToggleButton;
-            if (btn?.IsChecked == true)
+            if (_currentTool == ToolType.Highlighter)
+            {
+                ActivateTool(ToolType.None);
+            }
+            else
             {
                 ActivateTool(ToolType.Highlighter);
                 _highlighterPopup.PlacementTarget = HighlighterToolButton;
                 _highlighterPopup.IsOpen = true;
             }
-            else
-                ActivateTool(ToolType.None);
         }
 
         private void EraserToolButton_Click(object sender, RoutedEventArgs e)
         {
             if (_isUpdatingToolState) return;
-            var btn = sender as ToggleButton;
-            if (btn?.IsChecked == true)
+            if (_currentTool == ToolType.Eraser)
+            {
+                ActivateTool(ToolType.None);
+            }
+            else
             {
                 ActivateTool(ToolType.Eraser);
                 _eraserPopup.PlacementTarget = EraserToolButton;
                 _eraserPopup.IsOpen = true;
             }
-            else
-                ActivateTool(ToolType.None);
         }
 
         private void TextToolButton_Click(object sender, RoutedEventArgs e)
         {
             if (_isUpdatingToolState) return;
-            var btn = sender as ToggleButton;
-            ActivateTool(btn?.IsChecked == true ? ToolType.Text : ToolType.None);
+            if (_currentTool == ToolType.Text)
+            {
+                ActivateTool(ToolType.None);
+            }
+            else
+            {
+                ActivateTool(ToolType.Text);
+            }
         }
 
         private void ActivateTool(ToolType tool)
@@ -553,10 +562,12 @@ namespace WindowsNotesApp.Pages
 
             _isUpdatingToolState = true;
             _currentTool = tool;
-            PenToolButton.IsChecked = tool == ToolType.Pen;
-            HighlighterToolButton.IsChecked = tool == ToolType.Highlighter;
-            EraserToolButton.IsChecked = tool == ToolType.Eraser;
-            TextToolButton.IsChecked = tool == ToolType.Text;
+            
+            PenToolButton.Background = tool == ToolType.Pen ? new SolidColorBrush(Color.FromArgb(34, 0, 120, 212)) : Brushes.Transparent;
+            HighlighterToolButton.Background = tool == ToolType.Highlighter ? new SolidColorBrush(Color.FromArgb(34, 0, 120, 212)) : Brushes.Transparent;
+            EraserToolButton.Background = tool == ToolType.Eraser ? new SolidColorBrush(Color.FromArgb(34, 0, 120, 212)) : Brushes.Transparent;
+            TextToolButton.Background = tool == ToolType.Text ? new SolidColorBrush(Color.FromArgb(34, 0, 120, 212)) : Brushes.Transparent;
+            
             _isUpdatingToolState = false;
 
             UpdateToolIconColors();

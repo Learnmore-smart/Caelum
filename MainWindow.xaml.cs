@@ -17,7 +17,42 @@ namespace WindowsNotesApp
         {
             InitializeComponent();
             SourceInitialized += MainWindow_SourceInitialized;
+            StateChanged += MainWindow_StateChanged;
             RootFrame.Navigate(new HomePage());
+        }
+
+        private void MainWindow_StateChanged(object sender, EventArgs e)
+        {
+            if (WindowState == WindowState.Maximized)
+            {
+                MaximizeIcon.Text = "\uE923";
+            }
+            else
+            {
+                MaximizeIcon.Text = "\uE922";
+            }
+        }
+
+        private void MinimizeButton_Click(object sender, RoutedEventArgs e)
+        {
+            WindowState = WindowState.Minimized;
+        }
+
+        private void MaximizeButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (WindowState == WindowState.Maximized)
+            {
+                WindowState = WindowState.Normal;
+            }
+            else
+            {
+                WindowState = WindowState.Maximized;
+            }
+        }
+
+        private void CloseButton_Click(object sender, RoutedEventArgs e)
+        {
+            Close();
         }
 
         private void MainWindow_SourceInitialized(object sender, EventArgs e)
@@ -166,16 +201,14 @@ namespace WindowsNotesApp
 
         private void EnableAcrylicBlur(IntPtr handle)
         {
-            // Try Windows 11 Mica first
-            int backdropType = 2; // 2 = Mica, 3 = Acrylic
+            int backdropType = 3;
             DwmSetWindowAttribute(handle, 38, ref backdropType, Marshal.SizeOf(typeof(int)));
 
-            // Fallback for Windows 10
             var accent = new AccentPolicy
             {
-                AccentState = 3, // ACCENT_ENABLE_BLURBEHIND
+                AccentState = 4,
                 AccentFlags = 2,
-                GradientColor = unchecked((int)0x00FFFFFF) // Fully transparent
+                GradientColor = unchecked((int)0x99000000)
             };
 
             var accentSize = Marshal.SizeOf(accent);
@@ -184,7 +217,7 @@ namespace WindowsNotesApp
 
             var data = new WindowCompositionAttributeData
             {
-                Attribute = 19, // WCA_ACCENT_POLICY
+                Attribute = 19,
                 Data = accentPtr,
                 SizeOfData = accentSize
             };

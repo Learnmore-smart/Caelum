@@ -104,35 +104,35 @@
                     <Border Width="1" Background="#18000000" Margin="0,8,6,8"/>
 
                     <!-- Pen -->
-                    <ToggleButton x:Name="PenToolButton" Click="PenToolButton_Click"
-                                  Style="{StaticResource ToolbarToggleButtonStyle}"
-                                  Width="44" Height="38" Margin="3,0">
+                    <Button x:Name="PenToolButton" Click="PenToolButton_Click"
+                            Style="{StaticResource ToolbarButtonStyle}"
+                            Width="44" Height="38" Margin="3,0">
                         <TextBlock x:Name="PenIcon" Text="&#xED63;" FontFamily="Segoe MDL2 Assets" FontSize="20" Foreground="#333"/>
-                    </ToggleButton>
+                    </Button>
 
                     <!-- Highlighter (uses Segoe MDL2 marker icon) -->
-                    <ToggleButton x:Name="HighlighterToolButton" Click="HighlighterToolButton_Click"
-                                  Style="{StaticResource ToolbarToggleButtonStyle}"
-                                  Width="44" Height="38" Margin="3,0">
+                    <Button x:Name="HighlighterToolButton" Click="HighlighterToolButton_Click"
+                            Style="{StaticResource ToolbarButtonStyle}"
+                            Width="44" Height="38" Margin="3,0">
                         <TextBlock x:Name="HighlighterIcon" Text="&#xE7E6;" FontFamily="Segoe MDL2 Assets" FontSize="20" Foreground="#F59E0B"/>
-                    </ToggleButton>
+                    </Button>
 
                     <!-- Eraser -->
-                    <ToggleButton x:Name="EraserToolButton" Click="EraserToolButton_Click"
-                                  Style="{StaticResource ToolbarToggleButtonStyle}"
-                                  Width="44" Height="38" Margin="3,0">
+                    <Button x:Name="EraserToolButton" Click="EraserToolButton_Click"
+                            Style="{StaticResource ToolbarButtonStyle}"
+                            Width="44" Height="38" Margin="3,0">
                         <TextBlock x:Name="EraserIcon" Text="&#xE75C;" FontFamily="Segoe MDL2 Assets" FontSize="20" Foreground="#555"/>
-                    </ToggleButton>
+                    </Button>
 
                     <!-- Separator -->
                     <Border Width="1" Background="#18000000" Margin="6,8"/>
 
                     <!-- Text -->
-                    <ToggleButton x:Name="TextToolButton" Click="TextToolButton_Click"
-                                  Style="{StaticResource ToolbarToggleButtonStyle}"
-                                  Width="44" Height="38" Margin="3,0">
+                    <Button x:Name="TextToolButton" Click="TextToolButton_Click"
+                            Style="{StaticResource ToolbarButtonStyle}"
+                            Width="44" Height="38" Margin="3,0">
                         <TextBlock Text="A" FontSize="18" FontWeight="Bold" Foreground="#555"/>
-                    </ToggleButton>
+                    </Button>
                 </StackPanel>
 
                 <!-- Save button -->

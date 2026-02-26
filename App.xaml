@@ -302,17 +302,20 @@
                 <Setter Property="OverridesDefaultStyle" Value="True"/>
                 <Setter Property="Grid.IsSharedSizeScope" Value="True"/>
                 <Setter Property="HasDropShadow" Value="True"/>
-                <Setter Property="Background" Value="#A0FFFFFF"/> <!-- Transparent/Glass effect -->
+                <Setter Property="Background" Value="#FCFCFC"/> <!-- Almost solid white to fix shadow bleed -->
                 <Setter Property="Template">
                     <Setter.Value>
                         <ControlTemplate TargetType="ContextMenu">
-                            <Border Background="{TemplateBinding Background}" BorderBrush="#30000000" BorderThickness="1" CornerRadius="8" Padding="3">
-                                <Border.Effect>
-                                    <DropShadowEffect BlurRadius="16" ShadowDepth="4" Opacity="0.12" Color="#000"/>
-                                </Border.Effect>
-                                <ScrollViewer CanContentScroll="True" Style="{StaticResource SleekScrollViewer}">
-                                    <ItemsPresenter KeyboardNavigation.DirectionalNavigation="Cycle"/>
-                                </ScrollViewer>
+                            <!-- Outer border to provide margin space so drop shadow doesn't clip on the popup bounds -->
+                            <Border Background="Transparent" Padding="12">
+                                <Border Background="{TemplateBinding Background}" BorderBrush="#20000000" BorderThickness="1" CornerRadius="8" Padding="3">
+                                    <Border.Effect>
+                                        <DropShadowEffect BlurRadius="12" ShadowDepth="4" Opacity="0.10" Color="#000"/>
+                                    </Border.Effect>
+                                    <ScrollViewer CanContentScroll="True" Style="{StaticResource SleekScrollViewer}">
+                                        <ItemsPresenter KeyboardNavigation.DirectionalNavigation="Cycle"/>
+                                    </ScrollViewer>
+                                </Border>
                             </Border>
                         </ControlTemplate>
                     </Setter.Value>

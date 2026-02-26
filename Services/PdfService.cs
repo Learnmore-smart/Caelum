@@ -144,7 +144,8 @@ namespace WindowsNotesApp.Services
         private void ExtractAndStripAnnotations(Stream sourceStream, Stream outputStream)
         {
             ExtractedAnnotations.Clear();
-            double scale = 96.0 / 72.0;
+            const double renderDpi = 192.0;
+            double scale = renderDpi / 72.0;
 
             using var document = PdfReader.Open(sourceStream, PdfDocumentOpenMode.Modify);
 
@@ -271,11 +272,12 @@ namespace WindowsNotesApp.Services
                 if (_pdfDocument == null) return null;
                 if (pageIndex < 0 || pageIndex >= _pdfDocument.PageCount) return null;
 
+                const int renderDpi = 192;
                 var size = _pdfDocument.PageSizes[pageIndex];
-                int width = (int)size.Width;
-                int height = (int)size.Height;
+                int width = (int)(size.Width * renderDpi / 72.0);
+                int height = (int)(size.Height * renderDpi / 72.0);
 
-                using (var image = _pdfDocument.Render(pageIndex, width, height, 96, 96, PdfRenderFlags.Annotations))
+                using (var image = _pdfDocument.Render(pageIndex, width, height, renderDpi, renderDpi, PdfRenderFlags.Annotations))
                 {
                     using (var ms = new MemoryStream())
                     {
@@ -330,13 +332,14 @@ namespace WindowsNotesApp.Services
                 }
 
                 System.Diagnostics.Debug.WriteLine($"RenderPagePngBytesAsync: getting page {pageIndex}");
+                const int renderDpi = 192;
                 var size = _pdfDocument.PageSizes[pageIndex];
-                int width = (int)size.Width;
-                int height = (int)size.Height;
+                int width = (int)(size.Width * renderDpi / 72.0);
+                int height = (int)(size.Height * renderDpi / 72.0);
 
                 System.Diagnostics.Debug.WriteLine($"RenderPagePngBytesAsync: page {pageIndex} size: {width}x{height}");
                 
-                using (var image = _pdfDocument.Render(pageIndex, width, height, 96, 96, PdfRenderFlags.Annotations))
+                using (var image = _pdfDocument.Render(pageIndex, width, height, renderDpi, renderDpi, PdfRenderFlags.Annotations))
                 {
                     using (var ms = new MemoryStream())
                     {
@@ -373,7 +376,8 @@ namespace WindowsNotesApp.Services
 
                 using (var document = PdfReader.Open(sourceMs, PdfDocumentOpenMode.Modify))
                 {
-                    double scale = 72.0 / 96.0;
+                    const double renderDpi = 192.0;
+                    double scale = 72.0 / renderDpi;
 
                     for (int i = 0; i < document.PageCount; i++)
                     {
