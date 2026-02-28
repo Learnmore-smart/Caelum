@@ -299,6 +299,15 @@ namespace WindowsNotesApp.Pages
         // ─── Touch Manipulation (pinch-to-zoom + pan) ───
         private void PdfScrollViewer_ManipulationStarting(object sender, ManipulationStartingEventArgs e)
         {
+            // Only handle multi-finger gestures (pinch-to-zoom, two-finger pan).
+            // Single-touch from M-Pencil (which some Huawei digitizers report as
+            // a touch device rather than stylus) must pass through to the InkCanvas.
+            if (e.Manipulators.Count() < 2 && _currentTool != ToolType.None)
+            {
+                e.Cancel();
+                return;
+            }
+
             e.ManipulationContainer = PdfScrollViewer;
             e.Mode = ManipulationModes.Scale | ManipulationModes.Translate;
             _manipulationBaseZoom = _zoomLevel;
@@ -380,9 +389,28 @@ namespace WindowsNotesApp.Pages
 
         private void PdfScrollViewer_PreviewStylusDown(object sender, StylusDownEventArgs e)
         {
-            // Only handle pen (not finger touch) for stylus-drag scrolling
-            // Finger touch should go through to ManipulationDelta for pinch-to-zoom
-            if (_currentTool == ToolType.None && e.StylusDevice?.TabletDevice?.Type == TabletDeviceType.Stylus)
+            // Only handle pen (not finger touch) for stylus-drag scrolling.
+            // Finger touch should go through to ManipulationDelta for pinch-to-zoom.
+            // Include both Stylus and Touch tablet types — some Huawei MateBook
+            // digitizers report the M-Pencil as Touch rather than Stylus.
+            bool isPenDevice = e.StylusDevice?.TabletDevice?.Type == TabletDeviceType.Stylus;
+
+            // Heuristic: single-point non-finger device is likely a pen.
+            // This catches Huawei M-Pencil on MateBooks that report as Touch.
+            if (!isPenDevice && e.StylusDevice != null)
+            {
+                var tabletDevice = e.StylusDevice.TabletDevice;
+                // A real finger touch typically has TabletDeviceType.Touch.
+                // But a pen-as-touch has a single StylusDevice with StylusButtons
+                // (real fingers don't have buttons). Check for barrel/eraser buttons.
+                if (tabletDevice != null && e.StylusDevice.StylusButtons.Count > 1)
+                {
+                    isPenDevice = true;
+                    Console.WriteLine($"[EditorPage] Detected pen-as-touch device: {tabletDevice.Name}, buttons={e.StylusDevice.StylusButtons.Count}");
+                }
+            }
+
+            if (_currentTool == ToolType.None && isPenDevice)
             {
                 _isPenScrolling = true;
                 _penScrollStartPoint = e.GetPosition(PdfScrollViewer);
@@ -395,7 +423,7 @@ namespace WindowsNotesApp.Pages
 
         private void PdfScrollViewer_PreviewStylusMove(object sender, StylusEventArgs e)
         {
-            if (_isPenScrolling && _currentTool == ToolType.None && e.StylusDevice?.TabletDevice?.Type == TabletDeviceType.Stylus)
+            if (_isPenScrolling && _currentTool == ToolType.None)
             {
                 Point currentPoint = e.GetPosition(PdfScrollViewer);
                 double deltaY = currentPoint.Y - _penScrollStartPoint.Y;

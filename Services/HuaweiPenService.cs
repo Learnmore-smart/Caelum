@@ -8,14 +8,19 @@ namespace WindowsNotesApp.Services
     /// <summary>
     /// Lightweight service for Huawei M-Pencil eraser toggle on MateBook devices.
     ///
-    /// Signal paths handled:
+    /// STATUS: The M-Pencil double-tap eraser toggle does NOT work reliably because
+    /// Huawei does not provide a public API for third-party apps. This service
+    /// attempts two signal paths but neither is guaranteed:
+    ///
     ///   1. Win+F19 / Win+F20 global hotkeys – emitted by Huawei PC Manager
     ///      (AcAppDaemon.exe) or community tools like MateBook-E-Pen when the
-    ///      user double-clicks the M-Pencil.
+    ///      user double-clicks the M-Pencil. These hotkeys may not be sent
+    ///      depending on the PC Manager version and device model.
     ///      https://github.com/eiyooooo/MateBook-E-Pen
     ///
     ///   2. Standard Windows Ink pen inversion (StylusDevice.Inverted / IsEraser)
     ///      is handled directly by PdfPageControl – nothing extra needed here.
+    ///      However, M-Pencil does not support physical inversion.
     ///
     /// NOTE: We intentionally do NOT register for Raw HID Input (WM_INPUT +
     /// RIDEV_INPUTSINK).  Doing so floods the WPF message queue with thousands

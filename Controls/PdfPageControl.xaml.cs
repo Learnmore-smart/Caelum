@@ -76,7 +76,7 @@ namespace WindowsNotesApp.Controls
 
         private void InkCanvas_StrokeCollected(object sender, InkCanvasStrokeCollectedEventArgs e)
         {
-            // Touch Slop Threshold: 
+            // Touch Slop Threshold:
             // Discard strokes that are too short (accidental taps or phantom dots)
             // 2mm threshold ~ 8 pixels at 96 DPI
             const double TouchSlopThreshold = 8.0;
@@ -86,7 +86,7 @@ namespace WindowsNotesApp.Controls
             if (diagonal < TouchSlopThreshold)
             {
                 // Remove the short stroke
-                try 
+                try
                 {
                     InkCanvas.Strokes.Remove(e.Stroke);
                 }
@@ -125,7 +125,7 @@ namespace WindowsNotesApp.Controls
             InkCanvas.StylusButtonUp += InkCanvas_StylusButtonUp;
             InkCanvas.MouseEnter += InkCanvas_MouseEnter;
             InkCanvas.MouseLeave += InkCanvas_MouseLeave;
-            
+
             // Fix for auto-scroll bug: Prevent ScrollViewer from scrolling when InkCanvas gets focus
             this.RequestBringIntoView += PdfPageControl_RequestBringIntoView;
         }
@@ -231,14 +231,18 @@ namespace WindowsNotesApp.Controls
         {
             StylusPointProperties.BarrelButton.Id,
             StylusPointProperties.SecondaryTipButton.Id,
-            StylusPointProperties.TipButton.Id,
-            new Guid("E33D9F0A-D9FB-4D2E-8B7D-4E7A5B8C9D0E"),
-            new Guid("E33D9F0B-D9FB-4D2E-8B7D-4E7A5B8C9D0E"),
+            // NOTE: TipButton is the primary pen tip contact, NOT a side button.
+            // Including it here caused every pen-down to be treated as a barrel-button
+            // press, breaking inking on Huawei M-Pencil and similar devices.
         };
 
         private void InkCanvas_StylusButtonDown(object sender, StylusButtonEventArgs e)
         {
             Console.WriteLine($"[PdfPageControl] StylusButtonDown: name={e.StylusButton.Name}, GUID={e.StylusButton.Guid}, device={e.StylusDevice?.Name}");
+
+            // Ignore the tip button – it fires on every pen contact and is NOT a side button.
+            if (e.StylusButton.Guid == StylusPointProperties.TipButton.Id)
+                return;
 
             bool isSideButton = false;
             foreach (var guid in SideButtonGuids)
@@ -281,6 +285,9 @@ namespace WindowsNotesApp.Controls
 
         private void InkCanvas_StylusButtonUp(object sender, StylusButtonEventArgs e)
         {
+            if (e.StylusButton.Guid == StylusPointProperties.TipButton.Id)
+                return;
+
             bool isSideButton = false;
             foreach (var guid in SideButtonGuids)
             {
@@ -341,6 +348,10 @@ namespace WindowsNotesApp.Controls
 
         private void InkCanvas_StylusUp(object sender, StylusEventArgs e)
         {
+            // Safety: always clear barrel-button flag on pen lift to prevent stuck state.
+            // On some Huawei digitizers, StylusButtonUp may not fire reliably for all buttons.
+            _isBarrelButtonPressed = false;
+
             if (_isErasing)
             {
                 _isErasing = false;
