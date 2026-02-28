@@ -22,31 +22,43 @@ jobs:
         with:
           dotnet-version: '8.0.x'
 
-      - name: Publish (self-contained, single-file)
+      # ── Publish as a normal folder (NOT single-file) so pdfium.dll stays intact ──
+      - name: Publish (self-contained)
         run: >
           dotnet publish WindowsNotesApp.csproj
           -c Release
           -r win-x64
           --self-contained true
-          -p:PublishSingleFile=true
-          -p:IncludeNativeLibrariesForSelfExtract=true
-          -p:EnableCompressionInSingleFile=true
           -o publish
 
-      - name: Zip release
-        run: Compress-Archive -Path publish\* -DestinationPath WindowsNotesApp-win-x64.zip
+      # ── Build a proper Windows installer with Inno Setup ──
+      - name: Build Installer (Inno Setup)
+        run: |
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" installer.iss
+
+      # ── Also create a portable zip ──
+      - name: Zip portable release
+        run: Compress-Archive -Path publish\* -DestinationPath WindowsNotes-Portable-win-x64.zip
 
       # ── When triggered by a tag push → create a GitHub Release ──
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: WindowsNotesApp-win-x64.zip
+          files: |
+            installer_output/WindowsNotes-Setup-*.exe
+            WindowsNotes-Portable-win-x64.zip
           generate_release_notes: true
 
-      # ── Always upload as an artifact (manual runs too) ──
-      - name: Upload artifact
+      # ── Always upload as artifacts (manual runs too) ──
+      - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:
-          name: WindowsNotesApp-win-x64
+          name: WindowsNotes-Installer
+          path: installer_output/WindowsNotes-Setup-*.exe
+
+      - name: Upload portable artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: WindowsNotes-Portable
           path: publish/

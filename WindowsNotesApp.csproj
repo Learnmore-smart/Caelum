@@ -8,10 +8,15 @@
     <Nullable>disable</Nullable>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <AssemblyName>WindowsNotesApp</AssemblyName>
-    <Version>1.0.0.0</Version>
+    <Version>1.1.0</Version>
     <Authors>Noah</Authors>
-    <Product>Windows Notes App</Product>
+    <Product>Windows Notes</Product>
     <Description>A PDF annotation app with ink support</Description>
+
+    <!-- Publish settings: do NOT use single-file so native DLLs stay intact -->
+    <SelfContained>true</SelfContained>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
   </PropertyGroup>
 
   <ItemGroup>
