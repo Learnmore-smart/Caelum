@@ -21,4 +21,18 @@
     <PackageReference Include="System.Drawing.Common" Version="8.0.0" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Compile Remove="WindowsNotesApp.Tests\**" />
+    <EmbeddedResource Remove="WindowsNotesApp.Tests\**" />
+    <None Remove="WindowsNotesApp.Tests\**" />
+    <Page Remove="WindowsNotesApp.Tests\**" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Remove="Tests\**" />
+    <EmbeddedResource Remove="Tests\**" />
+    <None Remove="Tests\**" />
+    <Page Remove="Tests\**" />
+  </ItemGroup>
+
 </Project>

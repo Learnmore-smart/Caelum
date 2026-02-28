@@ -76,6 +76,27 @@ namespace WindowsNotesApp.Controls
 
         private void InkCanvas_StrokeCollected(object sender, InkCanvasStrokeCollectedEventArgs e)
         {
+            // Touch Slop Threshold: 
+            // Discard strokes that are too short (accidental taps or phantom dots)
+            // 2mm threshold ~ 8 pixels at 96 DPI
+            const double TouchSlopThreshold = 8.0;
+            var bounds = e.Stroke.GetBounds();
+            double diagonal = Math.Sqrt(bounds.Width * bounds.Width + bounds.Height * bounds.Height);
+
+            if (diagonal < TouchSlopThreshold)
+            {
+                // Remove the short stroke
+                try 
+                {
+                    InkCanvas.Strokes.Remove(e.Stroke);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[PdfPageControl] Error removing short stroke: {ex.Message}");
+                }
+                return;
+            }
+
             InkMutated?.Invoke(this, EventArgs.Empty);
             StrokeCollectedUndoable?.Invoke(this, e.Stroke);
         }
@@ -104,6 +125,9 @@ namespace WindowsNotesApp.Controls
             InkCanvas.StylusButtonUp += InkCanvas_StylusButtonUp;
             InkCanvas.MouseEnter += InkCanvas_MouseEnter;
             InkCanvas.MouseLeave += InkCanvas_MouseLeave;
+            
+            // Fix for auto-scroll bug: Prevent ScrollViewer from scrolling when InkCanvas gets focus
+            this.RequestBringIntoView += PdfPageControl_RequestBringIntoView;
         }
 
         private void PdfPageControl_Unloaded(object sender, RoutedEventArgs e)
@@ -120,6 +144,13 @@ namespace WindowsNotesApp.Controls
             InkCanvas.StylusButtonUp -= InkCanvas_StylusButtonUp;
             InkCanvas.MouseEnter -= InkCanvas_MouseEnter;
             InkCanvas.MouseLeave -= InkCanvas_MouseLeave;
+
+            this.RequestBringIntoView -= PdfPageControl_RequestBringIntoView;
+        }
+
+        private void PdfPageControl_RequestBringIntoView(object sender, RequestBringIntoViewEventArgs e)
+        {
+            e.Handled = true;
         }
 
         private void InkCanvas_MouseEnter(object sender, MouseEventArgs e)
