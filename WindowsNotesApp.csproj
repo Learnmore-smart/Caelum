@@ -8,6 +8,7 @@
     <Nullable>disable</Nullable>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <AssemblyName>WindowsNotesApp</AssemblyName>
+    <ApplicationIcon>Assets\app-icon.ico</ApplicationIcon>
     <Version>1.1.0</Version>
     <Authors>Noah</Authors>
     <Product>Windows Notes</Product>

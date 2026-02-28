@@ -22,6 +22,7 @@ DisableProgramGroupPage=yes
 LicenseFile=LICENSE
 OutputDir=installer_output
 OutputBaseFilename=WindowsNotes-Setup-{#MyAppVersion}
+SetupIconFile=Assets\app-icon.ico
 Compression=lzma2/ultra64
 SolidCompression=yes
 WizardStyle=modern
