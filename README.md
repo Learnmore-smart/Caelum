@@ -1,8 +1,12 @@
 # Windows Notes App
 
+![Home Page](public/home-page.png)
+
 Windows Notes App is a lightweight PDF annotation tool designed for Windows, built with WPF and .NET 8. It provides a smooth reading and writing experience with specialized support for stylus input, particularly for Huawei devices.
 
 ## Features
+
+![English Demo](public/en-demo.png)
 
 - **PDF Viewing & Annotation**: High-performance PDF rendering powered by PdfiumViewer. Open, read, and annotate your documents seamlessly.
 - **Windows Ink Support**: Native support for Windows Ink allows you to write, draw, and highlight directly on PDFs using a digital pen or touch.
@@ -38,6 +42,8 @@ See the [LICENSE](LICENSE) file for details.
 Windows 笔记应用是一款专为 Windows 设计的轻量级 PDF 阅读与批注工具，基于 WPF 和 .NET 8 开发。它提供了流畅的读写体验，并针对手写笔输入进行了特别优化，尤其是华为设备。
 
 ## 功能特点
+
+![Chinese Demo](public/cn-demo.png)
 
 - **PDF 阅读与批注**：基于 PdfiumViewer 的高性能 PDF 渲染引擎。您可以流畅地打开、阅读并批注 PDF 文档。
 - **Windows Ink 支持**：原生支持 Windows Ink，允许您使用手写笔或触控直接在文档上书写、绘图和高亮。

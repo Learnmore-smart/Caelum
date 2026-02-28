@@ -8,6 +8,7 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Ink;
 using WindowsNotesApp.Models;
+using WindowsNotesApp.Services;
 
 namespace WindowsNotesApp.Controls
 {
@@ -47,6 +48,20 @@ namespace WindowsNotesApp.Controls
         // signal path used by Huawei M-Pencil when MateBook-E-Pen is active.
         private bool _isStylusInverted;
 
+        // Universal pen service for pressure / tilt / device detection
+        private WindowsPenService _penService;
+
+        /// <summary>
+        /// Whether pressure-sensitive width variation is active.
+        /// When true, each stroke is post-processed to vary width by pressure.
+        /// </summary>
+        public bool PressureEnabled { get; set; } = true;
+
+        /// <summary>
+        /// Whether tilt-based width variation is active.
+        /// </summary>
+        public bool TiltEnabled { get; set; } = true;
+
         public PdfPageControl()
         {
             InitializeComponent();
@@ -57,7 +72,11 @@ namespace WindowsNotesApp.Controls
                 Width = 2,
                 Height = 2,
                 FitToCurve = true,
-                StylusTip = StylusTip.Ellipse
+                StylusTip = StylusTip.Ellipse,
+                // Ensure WPF captures and applies pressure data from the digitiser.
+                // This makes stroke width vary with pen pressure on all devices
+                // that report NormalPressure (Surface Pen, Wacom, etc.).
+                IgnorePressure = false
             };
 
             InkCanvas.DefaultDrawingAttributes = _drawingAttributes;
@@ -72,6 +91,20 @@ namespace WindowsNotesApp.Controls
 
             Loaded += PdfPageControl_Loaded;
             Unloaded += PdfPageControl_Unloaded;
+        }
+
+        /// <summary>
+        /// Set the shared <see cref="WindowsPenService"/> so this control can
+        /// probe stylus devices and read pressure/tilt capabilities.
+        /// </summary>
+        public void SetPenService(WindowsPenService service)
+        {
+            _penService = service;
+            if (service != null)
+            {
+                PressureEnabled = service.PressureEnabled;
+                TiltEnabled = service.TiltEnabled;
+            }
         }
 
         private void InkCanvas_StrokeCollected(object sender, InkCanvasStrokeCollectedEventArgs e)
@@ -179,6 +212,10 @@ namespace WindowsNotesApp.Controls
         /// </summary>
         private void InkCanvas_StylusInAirMove(object sender, StylusEventArgs e)
         {
+            // Probe the device early while hovering so capabilities are known
+            // before the first stroke lands.
+            _penService?.ProbeDevice(e.StylusDevice);
+
             bool inverted = e.StylusDevice?.Inverted == true;
 
             if (inverted != _isStylusInverted)
@@ -307,6 +344,10 @@ namespace WindowsNotesApp.Controls
 
         private void InkCanvas_StylusDown(object sender, StylusDownEventArgs e)
         {
+            // Probe the stylus device so WindowsPenService can detect its
+            // capabilities (pressure levels, tilt, barrel button, etc.).
+            _penService?.ProbeDevice(e.StylusDevice);
+
             bool shouldErase = e.Inverted || _isStylusInverted
                 || _isBarrelButtonPressed
                 || _currentMode == CustomInkInputProcessingMode.Erasing;
@@ -498,6 +539,9 @@ namespace WindowsNotesApp.Controls
         {
             _drawingAttributes = attributes.Clone();
             _drawingAttributes.FitToCurve = true;
+            // Always honour digitiser pressure so Surface Pen, Wacom, etc.
+            // produce natural width variation.
+            _drawingAttributes.IgnorePressure = false;
             InkCanvas.DefaultDrawingAttributes = _drawingAttributes;
         }
 

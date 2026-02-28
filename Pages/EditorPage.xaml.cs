@@ -91,8 +91,8 @@ namespace WindowsNotesApp.Pages
         private double _penScrollStartVerticalOffset;
         private double _penScrollStartHorizontalOffset;
 
-        // Huawei pen support
-        private HuaweiPenService _huaweiPenService;
+        // Universal pen support (Surface, Wacom, Huawei, Dell, HP, Lenovo, etc.)
+        private WindowsPenService _penService;
 
         // Auto-save timer (every 60 seconds)
         private System.Windows.Threading.DispatcherTimer _autoSaveTimer;
@@ -127,15 +127,15 @@ namespace WindowsNotesApp.Pages
 
         private void EditorPage_Loaded(object sender, RoutedEventArgs e)
         {
-            InitializeHuaweiPenService();
+            InitializePenService();
         }
 
         private void EditorPage_Unloaded(object sender, RoutedEventArgs e)
         {
             _autoSaveTimer?.Stop();
             _autoSaveTimer = null;
-            _huaweiPenService?.Dispose();
-            _huaweiPenService = null;
+            _penService?.Dispose();
+            _penService = null;
         }
 
         private async void AutoSaveTimer_Tick(object sender, EventArgs e)
@@ -148,30 +148,68 @@ namespace WindowsNotesApp.Pages
             }
         }
 
-        private void InitializeHuaweiPenService()
+        private void InitializePenService()
         {
-            if (_huaweiPenService != null)
+            if (_penService != null)
             {
-                Console.WriteLine("[EditorPage] HuaweiPenService already initialized, skipping");
+                Console.WriteLine("[EditorPage] WindowsPenService already initialized, skipping");
                 return;
             }
 
             var window = Window.GetWindow(this);
-            Console.WriteLine($"[EditorPage] InitializeHuaweiPenService – Window={window?.GetType().Name ?? "NULL"}");
+            Console.WriteLine($"[EditorPage] InitializePenService – Window={window?.GetType().Name ?? "NULL"}");
 
-            _huaweiPenService = new HuaweiPenService();
-            _huaweiPenService.ToolToggleRequested += HuaweiPenService_ToolToggleRequested;
-            _huaweiPenService.Initialize(window);
-            Console.WriteLine("[EditorPage] HuaweiPenService.Initialize() returned");
+            _penService = new WindowsPenService();
+            _penService.ToolToggleRequested += PenService_ToolToggleRequested;
+            _penService.PenDeviceDetected += PenService_PenDeviceDetected;
+            _penService.Initialize(window);
+            Console.WriteLine("[EditorPage] WindowsPenService.Initialize() returned");
+
+            // Push the pen service to all existing page controls
+            PushPenServiceToPages();
         }
 
-        private void HuaweiPenService_ToolToggleRequested(object sender, EventArgs e)
+        /// <summary>
+        /// Propagate the shared <see cref="WindowsPenService"/> to every
+        /// <see cref="PdfPageControl"/> currently in the pages container so
+        /// they can probe devices and honour pressure/tilt settings.
+        /// </summary>
+        private void PushPenServiceToPages()
+        {
+            if (_penService == null) return;
+            foreach (var child in PagesContainer.Children)
+            {
+                if (child is PdfPageControl page)
+                    page.SetPenService(_penService);
+            }
+        }
+
+        private void PenService_ToolToggleRequested(object sender, EventArgs e)
         {
             Console.WriteLine($"[EditorPage] ToolToggleRequested received on thread {System.Threading.Thread.CurrentThread.ManagedThreadId}");
             Dispatcher.BeginInvoke(new Action(() =>
             {
                 Console.WriteLine($"[EditorPage] ToggleEraserMode executing, current={_currentTool}");
                 ToggleEraserMode();
+            }));
+        }
+
+        private void PenService_PenDeviceDetected(object sender, PenDeviceInfo info)
+        {
+            Dispatcher.BeginInvoke(new Action(() =>
+            {
+                string brandName = info.PenBrand == PenBrand.Generic ? "Stylus" : info.PenBrand.ToString();
+                string features = "";
+                if (info.SupportsPressure) features += " pressure";
+                if (info.SupportsXTilt || info.SupportsYTilt) features += " tilt";
+                if (info.SupportsBarrelButton) features += " barrel-button";
+                features = features.Trim();
+                if (!string.IsNullOrEmpty(features))
+                    features = $" ({features})";
+
+                Console.WriteLine($"[EditorPage] Pen detected: {brandName}{features}");
+                var mw = Window.GetWindow(this) as MainWindow;
+                mw?.ShowToast($"{brandName} pen detected{features}", "\uEDA4", 2500);
             }));
         }
 
@@ -760,6 +798,11 @@ namespace WindowsNotesApp.Pages
                     pageControl.InkMutated += PageControl_InkMutated;
                     pageControl.StrokeCollectedUndoable += PageControl_StrokeCollectedUndoable;
                     pageControl.ModeChanged += PageControl_ModeChanged;
+
+                    // Push the universal pen service so this page can detect
+                    // pressure, tilt, barrel-button, etc.
+                    if (_penService != null)
+                        pageControl.SetPenService(_penService);
 
                     PagesContainer.Children.Add(pageControl);
                 }
