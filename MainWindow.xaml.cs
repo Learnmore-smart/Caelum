@@ -10,6 +10,7 @@ using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
+using System.Windows.Media.Imaging;
 using System.Windows.Navigation;
 using WindowsNotesApp.Models;
 using WindowsNotesApp.Pages;
@@ -24,12 +25,31 @@ namespace WindowsNotesApp
         public MainWindow()
         {
             InitializeComponent();
+            LoadAppIcon();
             SourceInitialized += MainWindow_SourceInitialized;
             StateChanged += MainWindow_StateChanged;
             KeyDown += MainWindow_KeyDown;
 
             // Create the first Home tab
             AddNewHomeTab(activate: true);
+        }
+
+        private void LoadAppIcon()
+        {
+            try
+            {
+                var iconPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Assets", "app-icon.ico");
+                if (!File.Exists(iconPath)) return;
+                using var fs = new FileStream(iconPath, FileMode.Open, FileAccess.Read);
+                var decoder = new IconBitmapDecoder(fs, BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad);
+                // Pick the largest frame — preserves 32-bit ARGB transparency
+                var best = decoder.Frames.OrderByDescending(f => f.PixelWidth).First();
+                Icon = best;
+            }
+            catch
+            {
+                // Fall back silently — window will use default icon
+            }
         }
 
         // ─── Tab Management ─────────────────────────────
@@ -381,6 +401,30 @@ namespace WindowsNotesApp
         private void MainWindow_SourceInitialized(object sender, EventArgs e)
         {
             var handle = new WindowInteropHelper(this).Handle;
+
+            // Enforce transparent icon at Win32 level
+            try
+            {
+                var iconPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Assets", "app-icon.ico");
+                if (File.Exists(iconPath))
+                {
+                    const int IMAGE_ICON = 1;
+                    const int LR_LOADFROMFILE = 0x00000010;
+                    const int LR_SHARED = 0x00008000;
+                    const int WM_SETICON = 0x0080;
+                    const int ICON_SMALL = 0;
+                    const int ICON_BIG = 1;
+
+                    // Fetch the absolute maximum icons internally to force extreme clarity and size
+                    IntPtr hIconSmall = LoadImage(IntPtr.Zero, iconPath, IMAGE_ICON, 64, 64, LR_LOADFROMFILE | LR_SHARED);
+                    IntPtr hIconBig = LoadImage(IntPtr.Zero, iconPath, IMAGE_ICON, 256, 256, LR_LOADFROMFILE | LR_SHARED);
+
+                    if (hIconSmall != IntPtr.Zero) SendMessage(handle, WM_SETICON, (IntPtr)ICON_SMALL, hIconSmall);
+                    if (hIconBig != IntPtr.Zero) SendMessage(handle, WM_SETICON, (IntPtr)ICON_BIG, hIconBig);
+                }
+            }
+            catch { }
+
             EnableAcrylicBlur(handle);
         }
 
@@ -445,7 +489,7 @@ namespace WindowsNotesApp
 
         private void About_Click(object sender, RoutedEventArgs e)
         {
-            MessageBox.Show("Windows Notes App v1.0\nA modern PDF annotation tool.", "About", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBox.Show("Caelum\nThe Modern Digital Ink Notetaker for Windows", "About", MessageBoxButton.OK, MessageBoxImage.Information);
         }
 
         // ─── Toast ─────────────────────────────────────
@@ -469,6 +513,15 @@ namespace WindowsNotesApp
 
         [DllImport("dwmapi.dll")]
         private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int attrValue, int attrSize);
+
+        [DllImport("user32.dll", CharSet = CharSet.Auto)]
+        private static extern IntPtr SendMessage(IntPtr hWnd, int Msg, IntPtr wParam, IntPtr lParam);
+
+        [DllImport("user32.dll", CharSet = CharSet.Auto)]
+        private static extern IntPtr LoadImage(IntPtr hInst, string lpszName, int uType, int cxDesired, int cyDesired, int fuLoad);
+
+        [DllImport("user32.dll")]
+        private static extern int GetSystemMetrics(int nIndex);
 
         // ─── Acrylic Blur (Glassmorphism) ──────────────
         [DllImport("user32.dll")]

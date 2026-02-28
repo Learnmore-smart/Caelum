@@ -11,8 +11,8 @@
     <ApplicationIcon>Assets\app-icon.ico</ApplicationIcon>
     <Version>1.1.0</Version>
     <Authors>Noah</Authors>
-    <Product>Windows Notes</Product>
-    <Description>A PDF annotation app with ink support</Description>
+    <Product>Caelum</Product>
+    <Description>The Modern Digital Ink Notetaker for Windows</Description>
 
     <!-- Publish settings: do NOT use single-file so native DLLs stay intact -->
     <SelfContained>true</SelfContained>
@@ -39,6 +39,12 @@
     <EmbeddedResource Remove="Tests\**" />
     <None Remove="Tests\**" />
     <Page Remove="Tests\**" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="Assets\app-icon.ico">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
   </ItemGroup>
 
 </Project>

@@ -1,8 +1,10 @@
-# Windows Notes App
+# Caelum
+
+**The Modern Digital Ink Notetaker for Windows**
 
 ![Home Page](public/home-page.png)
 
-Windows Notes App is a lightweight PDF annotation tool designed for Windows, built with WPF and .NET 8. It provides a smooth reading and writing experience with specialized support for stylus input, particularly for Huawei devices.
+Caelum is a lightweight PDF annotation tool designed for Windows, built with WPF and .NET 8. It provides a smooth reading and writing experience with specialized support for stylus input, particularly for Huawei devices.
 
 ## Features
 
@@ -37,7 +39,7 @@ See the [LICENSE](LICENSE) file for details.
 
 ---
 
-# Windows 笔记应用 (Windows Notes App)
+# Caelum（Windows 笔记应用）
 
 Windows 笔记应用是一款专为 Windows 设计的轻量级 PDF 阅读与批注工具，基于 WPF 和 .NET 8 开发。它提供了流畅的读写体验，并针对手写笔输入进行了特别优化，尤其是华为设备。
 

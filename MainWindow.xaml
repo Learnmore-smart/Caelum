@@ -2,7 +2,7 @@
     x:Class="WindowsNotesApp.MainWindow"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-    Title="Windows-notes"
+    Title="Caelum"
     Height="720" Width="1280"
     WindowStartupLocation="CenterScreen"
     Background="Transparent">
@@ -112,7 +112,8 @@
             <Grid>
                 <!-- Left: App name + Navigation -->
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                    <TextBlock Text="Windows-notes" FontSize="13" Foreground="#444444" Margin="16,0,12,0" VerticalAlignment="Center" FontWeight="SemiBold"/>
+                    <Image Source="{Binding Icon, RelativeSource={RelativeSource AncestorType=Window}}" Width="20" Height="20" Margin="14,0,4,0" RenderOptions.BitmapScalingMode="HighQuality"/>
+                    <TextBlock Text="Caelum" FontSize="13" Foreground="#444444" Margin="6,0,12,0" VerticalAlignment="Center" FontWeight="SemiBold"/>
                     <Button x:Name="NavBackButton" Click="NavBack_Click" Style="{StaticResource NavButtonStyle}" IsEnabled="False" WindowChrome.IsHitTestVisibleInChrome="True">
                         <TextBlock Text="&#xE72B;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#555555"/>
                     </Button>

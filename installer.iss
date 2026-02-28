@@ -1,8 +1,8 @@
-; Inno Setup Script for Windows Notes
+; Inno Setup Script for Caelum
 ; This creates a proper Windows installer with Start Menu shortcuts,
 ; Program Files installation, and an uninstaller.
 
-#define MyAppName "Windows Notes"
+#define MyAppName "Caelum"
 #define MyAppVersion "1.1.0"
 #define MyAppPublisher "Noah"
 #define MyAppURL "https://github.com/Learnmore-smart/Windows-Notes"
@@ -21,7 +21,7 @@ DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 LicenseFile=LICENSE
 OutputDir=installer_output
-OutputBaseFilename=WindowsNotes-Setup-{#MyAppVersion}
+OutputBaseFilename=Caelum-Setup-{#MyAppVersion}
 SetupIconFile=Assets\app-icon.ico
 Compression=lzma2/ultra64
 SolidCompression=yes
