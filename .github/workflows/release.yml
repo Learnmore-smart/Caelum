@@ -38,7 +38,7 @@ jobs:
 
       # ── Also create a portable zip ──
       - name: Zip portable release
-        run: Compress-Archive -Path publish\* -DestinationPath WindowsNotes-Portable-win-x64.zip
+        run: Compress-Archive -Path publish\* -DestinationPath Caelum-Portable-win-x64.zip
 
       # ── When triggered by a tag push → create a GitHub Release ──
       - name: Create GitHub Release
@@ -46,19 +46,19 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            installer_output/WindowsNotes-Setup-*.exe
-            WindowsNotes-Portable-win-x64.zip
+            installer_output/Caelum-Setup-*.exe
+            Caelum-Portable-win-x64.zip
           generate_release_notes: true
 
       # ── Always upload as artifacts (manual runs too) ──
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:
-          name: WindowsNotes-Installer
-          path: installer_output/WindowsNotes-Setup-*.exe
+          name: Caelum-Installer
+          path: installer_output/Caelum-Setup-*.exe
 
       - name: Upload portable artifact
         uses: actions/upload-artifact@v4
         with:
-          name: WindowsNotes-Portable
+          name: Caelum-Portable
           path: publish/
