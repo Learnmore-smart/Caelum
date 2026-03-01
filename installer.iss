@@ -1,9 +1,9 @@
-; Inno Setup Script for Caelum
+﻿; Inno Setup Script for Caelum
 ; This creates a proper Windows installer with Start Menu shortcuts,
 ; Program Files installation, and an uninstaller.
 
 #define MyAppName "Caelum"
-#define MyAppVersion "1.1.0"
+#define MyAppVersion "1.2.0"
 #define MyAppPublisher "Noah"
 #define MyAppURL "https://github.com/Learnmore-smart/Windows-Notes"
 #define MyAppExeName "WindowsNotesApp.exe"
