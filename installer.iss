@@ -4,7 +4,7 @@
 
 #define MyAppName "Caelum"
 #define MyAppVersion "1.2.0"
-#define MyAppPublisher "Noah"
+#define MyAppPublisher "Learnmore_smart"
 #define MyAppURL "https://github.com/Learnmore-smart/Windows-Notes"
 #define MyAppExeName "WindowsNotesApp.exe"
 

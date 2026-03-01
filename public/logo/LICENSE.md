@@ -3,7 +3,7 @@
 The Caelum logo and all related branding assets in this directory
 (`public/logo/`) are **NOT** covered by the project's open-source license.
 
-© 2026 Noah. All rights reserved.
+© 2026 Learnmore_smart. All rights reserved.
 
 You may **NOT**:
 - Use the logo in your own projects, products, or services
