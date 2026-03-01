@@ -9,7 +9,7 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <AssemblyName>WindowsNotesApp</AssemblyName>
     <ApplicationIcon>Assets\app-icon.ico</ApplicationIcon>
-    <Version>1.2.0</Version>
+    <Version>1.2.1</Version>
     <Authors>Learnmore_smart</Authors>
     <Company>Learnmore_smart</Company>
     <Product>Caelum</Product>
