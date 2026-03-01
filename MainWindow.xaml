@@ -5,7 +5,8 @@
     Title="Caelum"
     Height="720" Width="1280"
     WindowStartupLocation="CenterScreen"
-    Background="Transparent">
+    Background="Transparent"
+    AllowDrop="True">
 
     <WindowChrome.WindowChrome>
         <WindowChrome CaptionHeight="40" GlassFrameThickness="-1" UseAeroCaptionButtons="False" />
@@ -100,7 +101,7 @@
         </Style>
     </Window.Resources>
 
-    <Grid Background="#F3F3F3">
+    <Grid Background="#F3F3F3" AllowDrop="True">
         <Grid.RowDefinitions>
             <RowDefinition Height="40"/>
             <RowDefinition Height="Auto"/>

@@ -14,6 +14,7 @@ using System.Windows.Media.Imaging;
 using System.Windows.Navigation;
 using WindowsNotesApp.Models;
 using WindowsNotesApp.Pages;
+using WindowsNotesApp.Services;
 
 namespace WindowsNotesApp
 {
@@ -52,6 +53,62 @@ namespace WindowsNotesApp
             }
         }
 
+        // ─── Drag & Drop ────────────────────────────────
+
+        private static readonly string[] SupportedDropExtensions = { ".pdf" };
+
+        private bool HasSupportedFiles(DragEventArgs e)
+        {
+            if (!e.Data.GetDataPresent(DataFormats.FileDrop)) return false;
+            var files = (string[])e.Data.GetData(DataFormats.FileDrop);
+            return files != null && files.Any(f =>
+                SupportedDropExtensions.Contains(Path.GetExtension(f).ToLowerInvariant()));
+        }
+
+        private void Window_DragEnter(object sender, DragEventArgs e)
+        {
+            e.Effects = HasSupportedFiles(e) ? DragDropEffects.Copy : DragDropEffects.None;
+            e.Handled = true;
+        }
+
+        private void Window_DragOver(object sender, DragEventArgs e)
+        {
+            e.Effects = HasSupportedFiles(e) ? DragDropEffects.Copy : DragDropEffects.None;
+            e.Handled = true;
+        }
+
+        private void Window_Drop(object sender, DragEventArgs e)
+        {
+            if (!e.Data.GetDataPresent(DataFormats.FileDrop)) return;
+            var files = (string[])e.Data.GetData(DataFormats.FileDrop);
+            if (files == null) return;
+
+            var pdfFiles = files.Where(f =>
+                SupportedDropExtensions.Contains(Path.GetExtension(f).ToLowerInvariant())).ToList();
+
+            if (pdfFiles.Count == 0) return;
+
+            // If the active tab is on the Home page, open the first file in-place
+            bool isHomePage = ActiveFrame?.Content is HomePage;
+            bool first = true;
+
+            foreach (var file in pdfFiles)
+            {
+                if (first && isHomePage)
+                {
+                    // Open directly in the current Home tab
+                    NavigateActiveTabToFile(file);
+                    first = false;
+                }
+                else
+                {
+                    OpenFileInNewTab(file);
+                    first = false;
+                }
+            }
+            e.Handled = true;
+        }
+
         // ─── Tab Management ─────────────────────────────
 
         private Frame ActiveFrame => _activeTab?.Frame;
@@ -59,7 +116,7 @@ namespace WindowsNotesApp
         public void AddNewHomeTab(bool activate = true)
         {
             var tab = new AppTab { Title = "Home", Icon = "\uE80F" };
-            var frame = new Frame { NavigationUIVisibility = NavigationUIVisibility.Hidden };
+            var frame = new Frame { NavigationUIVisibility = NavigationUIVisibility.Hidden, AllowDrop = true };
             frame.Navigated += Frame_Navigated;
             tab.Frame = frame;
             TabContentArea.Children.Add(frame);
@@ -74,6 +131,9 @@ namespace WindowsNotesApp
 
         public void OpenFileInNewTab(string filePath)
         {
+            RecentFilesService.AddOrPromote(filePath);
+            UpdateRecentFilesTxt(filePath);
+
             // Check if this file is already open
             var existing = _tabs.FirstOrDefault(t =>
                 !string.IsNullOrEmpty(t.FilePath) &&
@@ -89,7 +149,7 @@ namespace WindowsNotesApp
             string icon = ext == ".pdf" ? "\uEA90" : "\uE7C3"; // PDF icon or generic document
 
             var tab = new AppTab { Title = name, Icon = icon, FilePath = filePath };
-            var frame = new Frame { NavigationUIVisibility = NavigationUIVisibility.Hidden };
+            var frame = new Frame { NavigationUIVisibility = NavigationUIVisibility.Hidden, AllowDrop = true };
             frame.Navigated += Frame_Navigated;
             tab.Frame = frame;
             TabContentArea.Children.Add(frame);
@@ -336,6 +396,9 @@ namespace WindowsNotesApp
         {
             if (_activeTab == null) return;
 
+            RecentFilesService.AddOrPromote(filePath);
+            UpdateRecentFilesTxt(filePath);
+
             // Check if already open in another tab
             var existing = _tabs.FirstOrDefault(t =>
                 t != _activeTab &&
@@ -426,6 +489,46 @@ namespace WindowsNotesApp
             catch { }
 
             EnableAcrylicBlur(handle);
+
+            // Allow drag-drop messages through UIPI (fixes blocked drops when running elevated)
+            ChangeWindowMessageFilterEx(handle, 0x0233, 1, IntPtr.Zero); // WM_DROPFILES
+            ChangeWindowMessageFilterEx(handle, 0x004A, 1, IntPtr.Zero); // WM_COPYDATA
+            ChangeWindowMessageFilterEx(handle, 0x0049, 1, IntPtr.Zero); // WM_COPYGLOBALDATA
+            DragDrop.AddPreviewDropHandler(this, Window_Drop);
+            DragDrop.AddPreviewDragOverHandler(this, Window_DragOver);
+            DragDrop.AddPreviewDragEnterHandler(this, Window_DragEnter);
+        }
+
+        /// <summary>
+        /// Writes the file path into the pipe-separated recent_files.txt that HomePage reads.
+        /// </summary>
+        private void UpdateRecentFilesTxt(string filePath)
+        {
+            try
+            {
+                var dir = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "WindowsNotesApp");
+                Directory.CreateDirectory(dir);
+                var recentTxtPath = Path.Combine(dir, "recent_files.txt");
+
+                var existing = new List<string>();
+                if (File.Exists(recentTxtPath))
+                {
+                    var content = File.ReadAllText(recentTxtPath);
+                    existing = new List<string>(
+                        content.Split('|', StringSplitOptions.RemoveEmptyEntries));
+                }
+
+                // Remove duplicate (case-insensitive)
+                existing.RemoveAll(p =>
+                    string.Equals(p.Trim(), filePath, StringComparison.OrdinalIgnoreCase));
+                // Insert at front
+                existing.Insert(0, filePath);
+
+                File.WriteAllText(recentTxtPath, string.Join("|", existing));
+            }
+            catch { /* best-effort */ }
         }
 
         // ─── Header Toolbar Buttons ────────────────────
@@ -522,6 +625,9 @@ namespace WindowsNotesApp
 
         [DllImport("user32.dll")]
         private static extern int GetSystemMetrics(int nIndex);
+
+        [DllImport("user32.dll")]
+        private static extern bool ChangeWindowMessageFilterEx(IntPtr hwnd, uint message, uint action, IntPtr pChangeFilterStruct);
 
         // ─── Acrylic Blur (Glassmorphism) ──────────────
         [DllImport("user32.dll")]

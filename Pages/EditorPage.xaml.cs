@@ -9,6 +9,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Shapes;
@@ -74,9 +75,20 @@ namespace WindowsNotesApp.Pages
         private double _lastRenderedDpiScale = 1.0;
         private CancellationTokenSource _reRenderCts;
 
+        // Tracks which pages have been re-rendered at the current _lastRenderedDpiScale
+        private readonly HashSet<int> _pagesRenderedAtScale = new HashSet<int>();
+        private CancellationTokenSource _scrollReRenderCts;
+
         // Smooth scrolling
         private double _targetVerticalOffset;
+        private double _targetHorizontalOffset;
         private bool _smoothScrollInitialized;
+
+        // Middle-mouse-button pan state
+        private bool _isMiddleMousePanning;
+        private Point _middleMouseStartPoint;
+        private double _middleMouseStartVerticalOffset;
+        private double _middleMouseStartHorizontalOffset;
 
         // Touch manipulation state
         private double _manipulationBaseZoom;
@@ -97,6 +109,10 @@ namespace WindowsNotesApp.Pages
         // Auto-save timer (every 60 seconds)
         private System.Windows.Threading.DispatcherTimer _autoSaveTimer;
 
+        // Horizontal mouse wheel hook for precision touchpads
+        private HwndSource _hwndSource;
+        private const int WM_MOUSEHWHEEL = 0x020E;
+
         public EditorPage()
         {
             InitializeComponent();
@@ -116,6 +132,9 @@ namespace WindowsNotesApp.Pages
             Loaded += EditorPage_Loaded;
             Unloaded += EditorPage_Unloaded;
 
+            // Re-render newly-visible pages when scrolling after a zoom
+            PdfScrollViewer.ScrollChanged += PdfScrollViewer_ScrollChanged;
+
             // Start interval auto-save timer
             _autoSaveTimer = new System.Windows.Threading.DispatcherTimer
             {
@@ -128,6 +147,7 @@ namespace WindowsNotesApp.Pages
         private void EditorPage_Loaded(object sender, RoutedEventArgs e)
         {
             InitializePenService();
+            InstallHorizontalWheelHook();
         }
 
         private void EditorPage_Unloaded(object sender, RoutedEventArgs e)
@@ -136,6 +156,53 @@ namespace WindowsNotesApp.Pages
             _autoSaveTimer = null;
             _penService?.Dispose();
             _penService = null;
+            RemoveHorizontalWheelHook();
+        }
+
+        // ─── WM_MOUSEHWHEEL hook for precision touchpad horizontal scrolling ───
+        private void InstallHorizontalWheelHook()
+        {
+            var window = Window.GetWindow(this);
+            if (window == null) return;
+            _hwndSource = PresentationSource.FromVisual(window) as HwndSource;
+            _hwndSource?.AddHook(WndProc);
+        }
+
+        private void RemoveHorizontalWheelHook()
+        {
+            _hwndSource?.RemoveHook(WndProc);
+            _hwndSource = null;
+        }
+
+        private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
+        {
+            if (msg == WM_MOUSEHWHEEL)
+            {
+                // wParam high word = horizontal delta (positive = right, negative = left)
+                int delta = (short)((wParam.ToInt64() >> 16) & 0xFFFF);
+
+                // Check if mouse is over our ScrollViewer
+                var mousePos = Mouse.GetPosition(PdfScrollViewer);
+                if (mousePos.X >= 0 && mousePos.Y >= 0 &&
+                    mousePos.X <= PdfScrollViewer.ActualWidth &&
+                    mousePos.Y <= PdfScrollViewer.ActualHeight)
+                {
+                    if (!_smoothScrollInitialized)
+                    {
+                        _targetHorizontalOffset = PdfScrollViewer.HorizontalOffset;
+                        _targetVerticalOffset = PdfScrollViewer.VerticalOffset;
+                        _smoothScrollInitialized = true;
+                    }
+
+                    double scrollAmount = delta * 0.8;
+                    _targetHorizontalOffset = Math.Max(0,
+                        Math.Min(PdfScrollViewer.ScrollableWidth, _targetHorizontalOffset + scrollAmount));
+
+                    AnimateHorizontalScroll(_targetHorizontalOffset);
+                    handled = true;
+                }
+            }
+            return IntPtr.Zero;
         }
 
         private async void AutoSaveTimer_Tick(object sender, EventArgs e)
@@ -285,18 +352,30 @@ namespace WindowsNotesApp.Pages
                 return;
             }
 
-            // Smooth scroll: animate to target offset
             e.Handled = true;
 
             if (!_smoothScrollInitialized)
             {
                 _targetVerticalOffset = PdfScrollViewer.VerticalOffset;
+                _targetHorizontalOffset = PdfScrollViewer.HorizontalOffset;
                 _smoothScrollInitialized = true;
             }
 
-            double scrollAmount = -e.Delta * 0.8;
+            // Shift+Wheel → horizontal scroll
+            if (Keyboard.Modifiers == ModifierKeys.Shift)
+            {
+                double scrollAmount = -e.Delta * 0.8;
+                _targetHorizontalOffset = Math.Max(0,
+                    Math.Min(PdfScrollViewer.ScrollableWidth, _targetHorizontalOffset + scrollAmount));
+
+                AnimateHorizontalScroll(_targetHorizontalOffset);
+                return;
+            }
+
+            // Normal wheel → vertical scroll
+            double vScrollAmount = -e.Delta * 0.8;
             _targetVerticalOffset = Math.Max(0,
-                Math.Min(PdfScrollViewer.ScrollableHeight, _targetVerticalOffset + scrollAmount));
+                Math.Min(PdfScrollViewer.ScrollableHeight, _targetVerticalOffset + vScrollAmount));
 
             AnimateScroll(_targetVerticalOffset);
         }
@@ -327,6 +406,7 @@ namespace WindowsNotesApp.Pages
 
             // Sync smooth scroll target
             _targetVerticalOffset = PdfScrollViewer.VerticalOffset;
+            _targetHorizontalOffset = PdfScrollViewer.HorizontalOffset;
             _smoothScrollInitialized = true;
 
             ScheduleReRenderForZoom();
@@ -375,6 +455,7 @@ namespace WindowsNotesApp.Pages
 
             // Sync smooth scroll state
             _targetVerticalOffset = PdfScrollViewer.VerticalOffset;
+            _targetHorizontalOffset = PdfScrollViewer.HorizontalOffset;
             _smoothScrollInitialized = true;
 
             e.Handled = true;
@@ -388,12 +469,19 @@ namespace WindowsNotesApp.Pages
             e.Handled = true;
         }
 
-        // ─── Smooth scroll animation ───
+        // ─── Smooth scroll animation (vertical) ───
         private double _scrollAnimationTarget;
         private double _scrollAnimationStart;
         private DateTime _scrollAnimationStartTime;
         private TimeSpan _scrollAnimationDuration;
         private bool _isScrollAnimating;
+
+        // ─── Smooth scroll animation (horizontal) ───
+        private double _hScrollAnimationTarget;
+        private double _hScrollAnimationStart;
+        private DateTime _hScrollAnimationStartTime;
+        private TimeSpan _hScrollAnimationDuration;
+        private bool _isHScrollAnimating;
 
         private void AnimateScroll(double toOffset)
         {
@@ -406,6 +494,36 @@ namespace WindowsNotesApp.Pages
             {
                 _isScrollAnimating = true;
                 System.Windows.Media.CompositionTarget.Rendering += CompositionTarget_ScrollRendering;
+            }
+        }
+
+        private void AnimateHorizontalScroll(double toOffset)
+        {
+            _hScrollAnimationTarget = toOffset;
+            _hScrollAnimationStart = PdfScrollViewer.HorizontalOffset;
+            _hScrollAnimationStartTime = DateTime.UtcNow;
+            _hScrollAnimationDuration = TimeSpan.FromMilliseconds(180);
+
+            if (!_isHScrollAnimating)
+            {
+                _isHScrollAnimating = true;
+                System.Windows.Media.CompositionTarget.Rendering += CompositionTarget_HScrollRendering;
+            }
+        }
+
+        private void CompositionTarget_HScrollRendering(object sender, EventArgs e)
+        {
+            var elapsed = DateTime.UtcNow - _hScrollAnimationStartTime;
+            double progress = Math.Min(1.0, elapsed.TotalMilliseconds / _hScrollAnimationDuration.TotalMilliseconds);
+            double easedProgress = 1.0 - Math.Pow(1.0 - progress, 3);
+
+            double currentOffset = _hScrollAnimationStart + (_hScrollAnimationTarget - _hScrollAnimationStart) * easedProgress;
+            PdfScrollViewer.ScrollToHorizontalOffset(currentOffset);
+
+            if (progress >= 1.0)
+            {
+                _isHScrollAnimating = false;
+                System.Windows.Media.CompositionTarget.Rendering -= CompositionTarget_HScrollRendering;
             }
         }
 
@@ -483,6 +601,46 @@ namespace WindowsNotesApp.Pages
             }
         }
 
+        // ─── Middle mouse button panning ───
+        private void PdfScrollViewer_PreviewMouseDown(object sender, MouseButtonEventArgs e)
+        {
+            if (e.ChangedButton == MouseButton.Middle)
+            {
+                _isMiddleMousePanning = true;
+                _middleMouseStartPoint = e.GetPosition(PdfScrollViewer);
+                _middleMouseStartVerticalOffset = PdfScrollViewer.VerticalOffset;
+                _middleMouseStartHorizontalOffset = PdfScrollViewer.HorizontalOffset;
+                PdfScrollViewer.CaptureMouse();
+                PdfScrollViewer.Cursor = Cursors.ScrollAll;
+                e.Handled = true;
+            }
+        }
+
+        private void PdfScrollViewer_PreviewMouseMove(object sender, MouseEventArgs e)
+        {
+            if (_isMiddleMousePanning)
+            {
+                Point currentPoint = e.GetPosition(PdfScrollViewer);
+                double deltaY = currentPoint.Y - _middleMouseStartPoint.Y;
+                double deltaX = currentPoint.X - _middleMouseStartPoint.X;
+
+                PdfScrollViewer.ScrollToVerticalOffset(_middleMouseStartVerticalOffset - deltaY);
+                PdfScrollViewer.ScrollToHorizontalOffset(_middleMouseStartHorizontalOffset - deltaX);
+                e.Handled = true;
+            }
+        }
+
+        private void PdfScrollViewer_PreviewMouseUp(object sender, MouseButtonEventArgs e)
+        {
+            if (_isMiddleMousePanning && e.ChangedButton == MouseButton.Middle)
+            {
+                _isMiddleMousePanning = false;
+                PdfScrollViewer.ReleaseMouseCapture();
+                PdfScrollViewer.Cursor = Cursors.Arrow;
+                e.Handled = true;
+            }
+        }
+
         private void SetZoom(double level)
         {
             _zoomLevel = Math.Max(ZoomMin, Math.Min(ZoomMax, level));
@@ -508,8 +666,8 @@ namespace WindowsNotesApp.Pages
 
             try
             {
-                // Debounce: wait 400ms after last zoom change
-                await Task.Delay(400, token);
+                // Debounce: wait 250ms after last zoom change
+                await Task.Delay(250, token);
                 token.ThrowIfCancellationRequested();
 
                 // Only re-render if zoom changed significantly from last render
@@ -521,24 +679,195 @@ namespace WindowsNotesApp.Pages
                     return; // Not enough difference to warrant re-render
 
                 _lastRenderedDpiScale = neededScale;
+                _pagesRenderedAtScale.Clear();
 
-                foreach (UIElement child in PagesContainer.Children)
+                // Only re-render pages currently visible in the viewport
+                var visiblePages = GetVisiblePageControls();
+                await ReRenderPagesAsync(visiblePages, neededScale, token);
+            }
+            catch (OperationCanceledException) { }
+        }
+
+        /// <summary>
+        /// Called on scroll — lazily render pages that haven't been rendered yet
+        /// (progressive loading) and re-render at higher DPI when zoomed in.
+        /// Uses a scroll-anchor to prevent the view from jumping when off-screen
+        /// pages change size during rendering.
+        /// </summary>
+        private async void PdfScrollViewer_ScrollChanged(object sender, ScrollChangedEventArgs e)
+        {
+            _scrollReRenderCts?.Cancel();
+            _scrollReRenderCts = new CancellationTokenSource();
+            var token = _scrollReRenderCts.Token;
+
+            try
+            {
+                // Small debounce so we don't re-render on every scroll tick
+                await Task.Delay(100, token);
+                token.ThrowIfCancellationRequested();
+
+                var visiblePages = GetVisiblePageControls();
+
+                // Progressive loading: render pages that haven't been rendered at all yet
+                var needsInitialRender = visiblePages
+                    .Where(p => !_pagesInitiallyRendered.Contains(p.PageIndex))
+                    .ToList();
+
+                if (needsInitialRender.Count > 0)
                 {
-                    token.ThrowIfCancellationRequested();
-                    if (child is PdfPageControl page)
+                    // Snapshot anchor before any rendering
+                    var anchor = CaptureScrollAnchor();
+
+                    foreach (var page in needsInitialRender)
                     {
-                        var imageBytes = await _pdfService.RenderPagePngBytesAsync(page.PageIndex, neededScale, token);
-                        if (imageBytes != null && imageBytes.Length > 0)
-                        {
-                            token.ThrowIfCancellationRequested();
-                            var image = await CreateBitmapImageAsync(imageBytes, token);
-                            // Keep the control dimensions at 192 DPI base size
-                            page.PageSource = image;
-                        }
+                        token.ThrowIfCancellationRequested();
+                        await RenderPageInitialAsync(page, token);
                     }
+
+                    // Restore anchor – this keeps the user's view rock-steady
+                    RestoreScrollAnchor(anchor);
+                }
+
+                // Zoom re-render: upgrade pages to higher DPI when zoomed in
+                if (_lastRenderedDpiScale > 1.0 && _pagesRenderedAtScale.Count < PagesContainer.Children.Count)
+                {
+                    var needsZoomRender = visiblePages
+                        .Where(p => !_pagesRenderedAtScale.Contains(p.PageIndex))
+                        .ToList();
+
+                    if (needsZoomRender.Count > 0)
+                        await ReRenderPagesAsync(needsZoomRender, _lastRenderedDpiScale, token);
                 }
             }
             catch (OperationCanceledException) { }
+        }
+
+        // ─── Scroll Anchor: keeps the user's view locked in place ───
+
+        private struct ScrollAnchor
+        {
+            public PdfPageControl AnchorPage;
+            public double OffsetFromViewportTop; // how far the page top sits from the viewport top (can be negative)
+        }
+
+        /// <summary>
+        /// Captures the page closest to the top of the viewport and its exact
+        /// y-offset relative to the viewport. This lets us restore the exact
+        /// same view after layout changes.
+        /// </summary>
+        private ScrollAnchor CaptureScrollAnchor()
+        {
+            var anchor = new ScrollAnchor();
+            double bestDist = double.MaxValue;
+
+            foreach (UIElement child in PagesContainer.Children)
+            {
+                if (child is PdfPageControl page)
+                {
+                    try
+                    {
+                        var transform = page.TransformToAncestor(PdfScrollViewer);
+                        var topLeft = transform.Transform(new Point(0, 0));
+                        // topLeft.Y is the position of the page top relative to the viewport top
+                        // (negative = page starts above viewport, positive = below)
+                        double dist = Math.Abs(topLeft.Y);
+                        if (dist < bestDist)
+                        {
+                            bestDist = dist;
+                            anchor.AnchorPage = page;
+                            anchor.OffsetFromViewportTop = topLeft.Y;
+                        }
+                    }
+                    catch { }
+                }
+            }
+
+            return anchor;
+        }
+
+        /// <summary>
+        /// After layout has changed (pages rendered / resized), snaps the
+        /// ScrollViewer so the anchor page sits at the same viewport position.
+        /// </summary>
+        private void RestoreScrollAnchor(ScrollAnchor anchor)
+        {
+            if (anchor.AnchorPage == null) return;
+
+            try
+            {
+                PdfScrollViewer.UpdateLayout();
+                var transform = anchor.AnchorPage.TransformToAncestor(PdfScrollViewer);
+                var currentTopLeft = transform.Transform(new Point(0, 0));
+
+                double drift = currentTopLeft.Y - anchor.OffsetFromViewportTop;
+                if (Math.Abs(drift) > 0.5)
+                {
+                    double newOffset = PdfScrollViewer.VerticalOffset + drift;
+                    PdfScrollViewer.ScrollToVerticalOffset(Math.Max(0, newOffset));
+                    _targetVerticalOffset = PdfScrollViewer.VerticalOffset;
+                }
+            }
+            catch { /* page may no longer be in tree */ }
+        }
+
+        /// <summary>
+        /// Re-renders a list of page controls at the given DPI scale using
+        /// the fast BitmapSource path (no PNG encode/decode).
+        /// </summary>
+        private async Task ReRenderPagesAsync(List<PdfPageControl> pages, double dpiScale, CancellationToken token)
+        {
+            foreach (var page in pages)
+            {
+                token.ThrowIfCancellationRequested();
+                try
+                {
+                    var bitmapSource = await _pdfService.RenderPageBitmapSourceAsync(page.PageIndex, dpiScale, token);
+                    if (bitmapSource != null)
+                    {
+                        token.ThrowIfCancellationRequested();
+                        page.PageSource = bitmapSource;
+                        _pagesRenderedAtScale.Add(page.PageIndex);
+                    }
+                }
+                catch (OperationCanceledException) { throw; }
+                catch { /* skip failed page, keep going */ }
+            }
+        }
+
+        /// <summary>
+        /// Returns PdfPageControl instances that are currently visible (or nearly visible)
+        /// in the ScrollViewer viewport.
+        /// </summary>
+        private List<PdfPageControl> GetVisiblePageControls()
+        {
+            var result = new List<PdfPageControl>();
+            if (PagesContainer.Children.Count == 0) return result;
+
+            double viewTop = PdfScrollViewer.VerticalOffset;
+            double viewBottom = viewTop + PdfScrollViewer.ViewportHeight;
+
+            // Add generous margin (~half viewport) so we pre-render pages just off-screen
+            double margin = PdfScrollViewer.ViewportHeight * 0.5;
+            viewTop = Math.Max(0, viewTop - margin);
+            viewBottom += margin;
+
+            foreach (UIElement child in PagesContainer.Children)
+            {
+                if (child is PdfPageControl page)
+                {
+                    // Get the page's position relative to the ScrollViewer
+                    var transform = page.TransformToAncestor(PdfScrollViewer);
+                    var topLeft = transform.Transform(new Point(0, 0));
+                    double pageTop = topLeft.Y + PdfScrollViewer.VerticalOffset;
+                    double pageBottom = pageTop + page.ActualHeight * _zoomLevel;
+
+                    // Check overlap with viewport
+                    if (pageBottom >= viewTop && pageTop <= viewBottom)
+                        result.Add(page);
+                }
+            }
+
+            return result;
         }
 
         private void PerformUndo()
@@ -758,6 +1087,9 @@ namespace WindowsNotesApp.Pages
             await LoadPdf(filePath);
         }
 
+        // Tracks which pages have been rendered with their initial image
+        private readonly HashSet<int> _pagesInitiallyRendered = new HashSet<int>();
+
         private async Task LoadPdf(string filePath)
         {
             CancelActiveLoad();
@@ -770,27 +1102,35 @@ namespace WindowsNotesApp.Pages
             PagesContainer.Children.Clear();
             DeselectTextBox();
             _isDirty = false;
+            _lastRenderedDpiScale = 1.0;
+            _pagesRenderedAtScale.Clear();
+            _pagesInitiallyRendered.Clear();
 
             try
             {
                 await _pdfService.LoadPdfAsync(filePath, token);
 
-                for (int i = 0; i < _pdfService.PageCount; i++)
+                int pageCount = _pdfService.PageCount;
+
+                // Phase 1: Create placeholder page controls with correct dimensions
+                // (fast – no rendering). This lets the UI appear quickly even for
+                // very large documents.
+                for (int i = 0; i < pageCount; i++)
                 {
                     token.ThrowIfCancellationRequested();
-                    var imageBytes = await _pdfService.RenderPagePngBytesAsync(i, token);
-                    if (imageBytes == null || imageBytes.Length == 0)
-                        throw new InvalidOperationException($"Failed to render page {i + 1}.");
 
-                    token.ThrowIfCancellationRequested();
-                    var image = await CreateBitmapImageAsync(imageBytes, token);
+                    var (w, h) = _pdfService.GetPageSizeInDips(i);
+                    if (w <= 0 || h <= 0)
+                    {
+                        w = 1584; // A4 at 192 DPI fallback
+                        h = 2245;
+                    }
 
                     var pageControl = new PdfPageControl
                     {
-                        PageSource = image,
-                        PageIndex = (int)i,
-                        Width = image.Width,
-                        Height = image.Height
+                        PageIndex = i,
+                        Width = w,
+                        Height = h
                     };
 
                     pageControl.TextOverlayPointerPressed += PageControl_TextOverlayPointerPressed;
@@ -799,8 +1139,6 @@ namespace WindowsNotesApp.Pages
                     pageControl.StrokeCollectedUndoable += PageControl_StrokeCollectedUndoable;
                     pageControl.ModeChanged += PageControl_ModeChanged;
 
-                    // Push the universal pen service so this page can detect
-                    // pressure, tilt, barrel-button, etc.
                     if (_penService != null)
                         pageControl.SetPenService(_penService);
 
@@ -809,6 +1147,25 @@ namespace WindowsNotesApp.Pages
 
                 ApplyToolToAllPages();
 
+                // Force layout so TransformToAncestor works for visibility checks
+                PdfScrollViewer.UpdateLayout();
+
+                // Reset scroll position: top-left, centered horizontally
+                PdfScrollViewer.ScrollToVerticalOffset(0);
+                PdfScrollViewer.ScrollToHorizontalOffset(0);
+                _targetVerticalOffset = 0;
+                _targetHorizontalOffset = 0;
+                _smoothScrollInitialized = true;
+
+                // Phase 2: Render only the initially visible pages (typically 1-3)
+                var visiblePages = GetVisiblePageControls();
+                foreach (var page in visiblePages)
+                {
+                    token.ThrowIfCancellationRequested();
+                    await RenderPageInitialAsync(page, token);
+                }
+
+                // Phase 3: Load annotations
                 if (!string.IsNullOrEmpty(_currentPdfPath))
                 {
                     await LoadAnnotationsFromPdfServiceAsync();
@@ -833,6 +1190,34 @@ namespace WindowsNotesApp.Pages
             {
                 if (sessionId == _loadSessionId)
                     HideLoadingOverlay();
+            }
+        }
+
+        /// <summary>
+        /// Renders a single page's initial image using the fast BitmapSource path.
+        /// Only renders if the page hasn't been rendered yet.
+        /// Does NOT adjust scroll — the caller is responsible for anchor save/restore.
+        /// </summary>
+        private async Task RenderPageInitialAsync(PdfPageControl page, CancellationToken token)
+        {
+            if (_pagesInitiallyRendered.Contains(page.PageIndex)) return;
+
+            try
+            {
+                var bitmapSource = await _pdfService.RenderPageBitmapSourceAsync(page.PageIndex, 1.0, token);
+                if (bitmapSource != null)
+                {
+                    token.ThrowIfCancellationRequested();
+                    page.PageSource = bitmapSource;
+                    page.Width = bitmapSource.Width;
+                    page.Height = bitmapSource.Height;
+                    _pagesInitiallyRendered.Add(page.PageIndex);
+                }
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"RenderPageInitialAsync page {page.PageIndex} failed: {ex.Message}");
             }
         }
 

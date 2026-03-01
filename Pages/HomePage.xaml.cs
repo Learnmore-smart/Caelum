@@ -314,40 +314,126 @@ namespace WindowsNotesApp.Pages
             var mw = Window.GetWindow(this) as MainWindow;
             if (mw == null) return;
 
-            // Show a simple input dialog
+            // Modern input dialog
             var inputWin = new Window
             {
-                Title = "Rename",
-                Width = 380,
-                Height = 160,
+                Title = "Rename File",
+                Width = 400,
+                Height = 210,
                 WindowStartupLocation = WindowStartupLocation.CenterOwner,
                 Owner = mw,
                 ResizeMode = ResizeMode.NoResize,
-                WindowStyle = WindowStyle.SingleBorderWindow,
-                Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(250, 250, 250))
+                WindowStyle = WindowStyle.None,
+                Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(253, 253, 253)),
+                BorderThickness = new Thickness(1),
+                BorderBrush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(200, 200, 200)),
+                ShowInTaskbar = false
             };
 
-            var stack = new StackPanel { Margin = new Thickness(20, 16, 20, 16) };
+            var grid = new Grid { Margin = new Thickness(24) };
+            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+
+            inputWin.MouseLeftButtonDown += (s, ev) => { inputWin.DragMove(); };
+
+            var titleLabel = new TextBlock
+            {
+                Text = "Rename File",
+                FontSize = 18,
+                FontWeight = FontWeights.SemiBold,
+                Foreground = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(30, 30, 30)),
+                Margin = new Thickness(0, 0, 0, 16)
+            };
+            Grid.SetRow(titleLabel, 0);
+            grid.Children.Add(titleLabel);
+
+            var label = new TextBlock
+            {
+                Text = "Enter a new name for this file:",
+                FontSize = 14,
+                Foreground = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(80, 80, 80)),
+                Margin = new Thickness(0, 0, 0, 8)
+            };
+            Grid.SetRow(label, 1);
+            grid.Children.Add(label);
+
+            var nameBoxStyle = new Style(typeof(TextBox));
+            nameBoxStyle.Setters.Add(new Setter(TextBox.PaddingProperty, new Thickness(10, 8, 10, 8)));
+            nameBoxStyle.Setters.Add(new Setter(TextBox.FontSizeProperty, 14.0));
+            nameBoxStyle.Setters.Add(new Setter(TextBox.VerticalContentAlignmentProperty, VerticalAlignment.Center));
+
+            // To mimic modern rounded corner without custom template, wrap in Border (though standard TextBox template is square, setting borderbrush clear and wrapping helps)
+            var textBoxBorder = new Border
+            {
+                CornerRadius = new CornerRadius(6),
+                BorderBrush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(200, 200, 200)),
+                BorderThickness = new Thickness(1),
+                Background = System.Windows.Media.Brushes.White,
+                Padding = new Thickness(0)
+            };
+            Grid.SetRow(textBoxBorder, 2);
+
             var nameBox = new TextBox
             {
                 Text = System.IO.Path.GetFileNameWithoutExtension(tile.Path),
-                FontSize = 14,
-                Padding = new Thickness(8, 6, 8, 6)
+                Style = nameBoxStyle,
+                BorderThickness = new Thickness(0),
+                Background = System.Windows.Media.Brushes.Transparent
             };
             nameBox.SelectAll();
-            stack.Children.Add(nameBox);
+            textBoxBorder.Child = nameBox;
+            grid.Children.Add(textBoxBorder);
+
+            var btnPanel = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                HorizontalAlignment = HorizontalAlignment.Right,
+                VerticalAlignment = VerticalAlignment.Bottom
+            };
+            Grid.SetRow(btnPanel, 3);
+
+            var cancelBtn = new Button
+            {
+                Content = "Cancel",
+                Margin = new Thickness(0, 0, 10, 0),
+                IsCancel = true
+            };
+            var secStyle = Application.Current.TryFindResource("DialogSecondaryButton") as Style;
+            if (secStyle != null)
+            {
+                cancelBtn.Style = secStyle;
+            }
+            else
+            {
+                cancelBtn.Width = 80;
+                cancelBtn.Height = 32;
+            }
+            cancelBtn.Click += (s, ev) => inputWin.DialogResult = false;
 
             var okBtn = new Button
             {
-                Content = "OK",
-                Width = 80,
-                Height = 30,
-                Margin = new Thickness(0, 14, 0, 0),
-                HorizontalAlignment = HorizontalAlignment.Right
+                Content = "Rename",
+                IsDefault = true
             };
+            var priStyle = Application.Current.TryFindResource("DialogPrimaryButton") as Style;
+            if (priStyle != null)
+            {
+                okBtn.Style = priStyle;
+            }
+            else
+            {
+                okBtn.Width = 80;
+                okBtn.Height = 32;
+            }
             okBtn.Click += (s, ev) => inputWin.DialogResult = true;
-            stack.Children.Add(okBtn);
-            inputWin.Content = stack;
+
+            btnPanel.Children.Add(cancelBtn);
+            btnPanel.Children.Add(okBtn);
+            grid.Children.Add(btnPanel);
+
+            inputWin.Content = grid;
             nameBox.Focus();
 
             if (inputWin.ShowDialog() == true)

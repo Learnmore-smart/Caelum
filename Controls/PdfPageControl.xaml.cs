@@ -17,11 +17,11 @@ namespace WindowsNotesApp.Controls
     public sealed partial class PdfPageControl : UserControl
     {
         public static readonly DependencyProperty PageSourceProperty =
-            DependencyProperty.Register(nameof(PageSource), typeof(BitmapImage), typeof(PdfPageControl), new PropertyMetadata(null, OnPageSourceChanged));
+            DependencyProperty.Register(nameof(PageSource), typeof(BitmapSource), typeof(PdfPageControl), new PropertyMetadata(null, OnPageSourceChanged));
 
-        public BitmapImage PageSource
+        public BitmapSource PageSource
         {
-            get => (BitmapImage)GetValue(PageSourceProperty);
+            get => (BitmapSource)GetValue(PageSourceProperty);
             set => SetValue(PageSourceProperty, value);
         }
 
@@ -521,7 +521,7 @@ namespace WindowsNotesApp.Controls
         private static void OnPageSourceChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
         {
             var control = (PdfPageControl)d;
-            control.PdfImage.Source = (BitmapImage)e.NewValue;
+            control.PdfImage.Source = (BitmapSource)e.NewValue;
         }
 
         public void SetMode(bool isTextMode)
