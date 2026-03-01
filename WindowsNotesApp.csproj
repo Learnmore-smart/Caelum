@@ -11,6 +11,7 @@
     <ApplicationIcon>Assets\app-icon.ico</ApplicationIcon>
     <Version>1.2.0</Version>
     <Authors>Learnmore_smart</Authors>
+    <Company>Learnmore_smart</Company>
     <Product>Caelum</Product>
     <Description>The Modern Digital Ink Notetaker for Windows</Description>
 
