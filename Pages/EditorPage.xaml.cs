@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -13,6 +13,9 @@ using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Shapes;
+using Forms = System.Windows.Forms;
+using PdfiumPdfDocument = PdfiumViewer.PdfDocument;
+using PdfiumWinFormsViewer = PdfiumViewer.PdfViewer;
 using WindowsNotesApp.Controls;
 using WindowsNotesApp.Models;
 using WindowsNotesApp.Services;
@@ -35,6 +38,8 @@ namespace WindowsNotesApp.Pages
         private bool _isUpdatingToolState;
 
         private readonly PdfService _pdfService;
+        private PdfiumWinFormsViewer _selectionPdfViewer;
+        private PdfiumPdfDocument _selectionPdfDocument;
         private CancellationTokenSource _loadCts;
         private int _loadSessionId;
         private bool _isDirty;
@@ -52,7 +57,6 @@ namespace WindowsNotesApp.Pages
 
         private bool _isDragging;
         private bool _dragArmed;
-        private Point _dragStartOffset;
         private Point _dragPressPointOnCanvas;
         private Grid _draggedContainer;
         private double _dragStartX;
@@ -77,7 +81,11 @@ namespace WindowsNotesApp.Pages
 
         // Tracks which pages have been re-rendered at the current _lastRenderedDpiScale
         private readonly HashSet<int> _pagesRenderedAtScale = new HashSet<int>();
+        private readonly List<PdfPageControl> _pageControls = new List<PdfPageControl>();
+        private readonly List<double> _pageTopOffsets = new List<double>();
+        private readonly List<double> _pageHeights = new List<double>();
         private CancellationTokenSource _scrollReRenderCts;
+        private const double PageSpacing = 20.0;
 
         // Smooth scrolling
         private double _targetVerticalOffset;
@@ -118,6 +126,8 @@ namespace WindowsNotesApp.Pages
             InitializeComponent();
             InitializeTextBoxPopup();
             CreateToolPopups();
+            InitializeSelectablePdfViewer();
+            ApplyLocalization();
 
             _pdfService = new PdfService();
             ActivateTool(ToolType.None);
@@ -128,6 +138,8 @@ namespace WindowsNotesApp.Pages
             FixPopupTopmost(_eraserPopup);
 
             KeyDown += EditorPage_KeyDown;
+            PreviewMouseDown += EditorPage_PreviewMouseDown;
+            PreviewStylusDown += EditorPage_PreviewStylusDown;
 
             Loaded += EditorPage_Loaded;
             Unloaded += EditorPage_Unloaded;
@@ -157,9 +169,130 @@ namespace WindowsNotesApp.Pages
             _penService?.Dispose();
             _penService = null;
             RemoveHorizontalWheelHook();
+            DisposeSelectablePdfDocument();
         }
 
-        // ─── WM_MOUSEHWHEEL hook for precision touchpad horizontal scrolling ───
+        private bool IsSelectablePdfSurfaceAvailable => _selectionPdfViewer?.Document != null;
+
+        private bool IsSelectablePdfSurfaceActive => _currentTool == ToolType.None && IsSelectablePdfSurfaceAvailable;
+
+        private void InitializeSelectablePdfViewer()
+        {
+            _selectionPdfViewer = new PdfiumWinFormsViewer
+            {
+                Dock = Forms.DockStyle.Fill,
+                ShowToolbar = false,
+                ShowBookmarks = false,
+                BackColor = System.Drawing.Color.FromArgb(234, 234, 234)
+            };
+            _selectionPdfViewer.Renderer.ZoomChanged += SelectionRenderer_ZoomChanged;
+            SelectablePdfHost.Child = _selectionPdfViewer;
+            UpdatePdfSurfaceVisibility();
+        }
+
+        private void SelectionRenderer_ZoomChanged(object sender, EventArgs e)
+        {
+            if (!IsSelectablePdfSurfaceActive)
+                return;
+
+            var zoom = _selectionPdfViewer?.Renderer?.Zoom ?? 0;
+            if (zoom <= 0 || double.IsNaN(zoom) || double.IsInfinity(zoom))
+                return;
+
+            _zoomLevel = Math.Max(ZoomMin, Math.Min(ZoomMax, zoom));
+            UpdateZoomLabel();
+        }
+
+        private void DisposeSelectablePdfDocument()
+        {
+            if (_selectionPdfViewer != null)
+                _selectionPdfViewer.Document = null;
+
+            _selectionPdfDocument?.Dispose();
+            _selectionPdfDocument = null;
+        }
+
+        private async Task LoadSelectablePdfDocumentAsync(string filePath, CancellationToken token)
+        {
+            PdfiumPdfDocument document = null;
+
+            try
+            {
+                document = await Task.Run(() => PdfiumPdfDocument.Load(filePath), token);
+                token.ThrowIfCancellationRequested();
+
+                DisposeSelectablePdfDocument();
+                _selectionPdfDocument = document;
+                _selectionPdfViewer.Document = _selectionPdfDocument;
+                ApplySelectableViewerZoom(_zoomLevel);
+            }
+            catch (OperationCanceledException)
+            {
+                document?.Dispose();
+                throw;
+            }
+            catch (Exception ex)
+            {
+                document?.Dispose();
+                System.Diagnostics.Debug.WriteLine($"LoadSelectablePdfDocumentAsync failed: {ex.Message}");
+            }
+            finally
+            {
+                UpdatePdfSurfaceVisibility();
+            }
+        }
+
+        private void UpdatePdfSurfaceVisibility()
+        {
+            bool showSelectableSurface = IsSelectablePdfSurfaceActive && LoadingOverlay.Visibility != Visibility.Visible;
+            SelectablePdfContainer.Visibility = showSelectableSurface ? Visibility.Visible : Visibility.Collapsed;
+            PdfScrollViewer.Visibility = showSelectableSurface ? Visibility.Collapsed : Visibility.Visible;
+        }
+
+        private void SyncSelectableViewerFromCustomView()
+        {
+            if (!IsSelectablePdfSurfaceAvailable)
+                return;
+
+            ApplySelectableViewerZoom(_zoomLevel);
+
+            var anchor = CaptureScrollAnchor();
+            if (anchor.AnchorPage != null)
+                _selectionPdfViewer.Renderer.Page = anchor.AnchorPage.PageIndex;
+        }
+
+        private void SyncCustomSurfaceFromSelectableViewer()
+        {
+            if (!IsSelectablePdfSurfaceAvailable)
+                return;
+
+            var zoom = _selectionPdfViewer.Renderer.Zoom;
+            if (zoom > 0 && !double.IsNaN(zoom) && !double.IsInfinity(zoom))
+                _zoomLevel = Math.Max(ZoomMin, Math.Min(ZoomMax, zoom));
+
+            ApplyCustomZoom(_zoomLevel);
+
+            int pageIndex = _selectionPdfViewer.Renderer.Page;
+            if (pageIndex >= 0 && pageIndex < _pageControls.Count)
+            {
+                PdfScrollViewer.ScrollToVerticalOffset(Math.Max(0, GetScaledPageTop(pageIndex)));
+                _targetVerticalOffset = PdfScrollViewer.VerticalOffset;
+                _targetHorizontalOffset = PdfScrollViewer.HorizontalOffset;
+                _smoothScrollInitialized = true;
+            }
+        }
+
+        private void ApplySelectableViewerZoom(double level, Point? focusPoint = null)
+        {
+            if (!IsSelectablePdfSurfaceAvailable)
+                return;
+
+            _zoomLevel = Math.Max(ZoomMin, Math.Min(ZoomMax, level));
+            _selectionPdfViewer.Renderer.Zoom = _zoomLevel;
+            UpdateZoomLabel();
+        }
+
+        // 閳光偓閳光偓閳光偓 WM_MOUSEHWHEEL hook for precision touchpad horizontal scrolling 閳光偓閳光偓閳光偓
         private void InstallHorizontalWheelHook()
         {
             var window = Window.GetWindow(this);
@@ -211,7 +344,7 @@ namespace WindowsNotesApp.Pages
             if (saved)
             {
                 var mw = Window.GetWindow(this) as MainWindow;
-                mw?.ShowToast("Auto saved", "\uE74E", 1500);
+                mw?.ShowToast(LocalizationService.Get("Editor.AutoSaved"), "\uE74E", 1500);
             }
         }
 
@@ -224,7 +357,7 @@ namespace WindowsNotesApp.Pages
             }
 
             var window = Window.GetWindow(this);
-            Console.WriteLine($"[EditorPage] InitializePenService – Window={window?.GetType().Name ?? "NULL"}");
+            Console.WriteLine($"[EditorPage] InitializePenService 閳?Window={window?.GetType().Name ?? "NULL"}");
 
             _penService = new WindowsPenService();
             _penService.ToolToggleRequested += PenService_ToolToggleRequested;
@@ -244,11 +377,8 @@ namespace WindowsNotesApp.Pages
         private void PushPenServiceToPages()
         {
             if (_penService == null) return;
-            foreach (var child in PagesContainer.Children)
-            {
-                if (child is PdfPageControl page)
-                    page.SetPenService(_penService);
-            }
+            foreach (var page in _pageControls)
+                page.SetPenService(_penService);
         }
 
         private void PenService_ToolToggleRequested(object sender, EventArgs e)
@@ -284,12 +414,12 @@ namespace WindowsNotesApp.Pages
         {
             if (_currentTool == ToolType.Eraser)
             {
-                Console.WriteLine($"[EditorPage] Eraser → {_previousTool}");
+                Console.WriteLine($"[EditorPage] Eraser 閳?{_previousTool}");
                 ActivateTool(_previousTool);
             }
             else
             {
-                Console.WriteLine($"[EditorPage] {_currentTool} → Eraser");
+                Console.WriteLine($"[EditorPage] {_currentTool} 閳?Eraser");
                 _previousTool = _currentTool;
                 ActivateTool(ToolType.Eraser);
             }
@@ -361,7 +491,7 @@ namespace WindowsNotesApp.Pages
                 _smoothScrollInitialized = true;
             }
 
-            // Shift+Wheel → horizontal scroll
+            // Shift+Wheel 閳?horizontal scroll
             if (Keyboard.Modifiers == ModifierKeys.Shift)
             {
                 double scrollAmount = -e.Delta * 0.8;
@@ -372,7 +502,7 @@ namespace WindowsNotesApp.Pages
                 return;
             }
 
-            // Normal wheel → vertical scroll
+            // Normal wheel 閳?vertical scroll
             double vScrollAmount = -e.Delta * 0.8;
             _targetVerticalOffset = Math.Max(0,
                 Math.Min(PdfScrollViewer.ScrollableHeight, _targetVerticalOffset + vScrollAmount));
@@ -380,41 +510,37 @@ namespace WindowsNotesApp.Pages
             AnimateScroll(_targetVerticalOffset);
         }
 
-        // ─── Zoom around a point (keeps that point stable on screen) ───
+        // 閳光偓閳光偓閳光偓 Zoom around a point (keeps that point stable on screen) 閳光偓閳光偓閳光偓
         private void ZoomAroundPoint(double newZoom, Point viewportPoint)
         {
+            if (IsSelectablePdfSurfaceActive)
+            {
+                ApplySelectableViewerZoom(newZoom, viewportPoint);
+                return;
+            }
+
             double oldZoom = _zoomLevel;
 
-            // Convert viewport point to content coordinates
+            // Convert viewport point to content coordinates.
             double contentX = (PdfScrollViewer.HorizontalOffset + viewportPoint.X) / oldZoom;
             double contentY = (PdfScrollViewer.VerticalOffset + viewportPoint.Y) / oldZoom;
 
-            // Apply zoom
-            _zoomLevel = newZoom;
-            PagesZoomTransform.ScaleX = _zoomLevel;
-            PagesZoomTransform.ScaleY = _zoomLevel;
+            ApplyCustomZoom(newZoom);
 
-            // Force layout so ScrollableHeight/Width update
-            PdfScrollViewer.UpdateLayout();
+            Dispatcher.BeginInvoke(new Action(() =>
+            {
+                double newOffsetX = Math.Max(0, contentX * _zoomLevel - viewportPoint.X);
+                double newOffsetY = Math.Max(0, contentY * _zoomLevel - viewportPoint.Y);
 
-            // Calculate new offsets to keep the point stable
-            double newOffsetX = contentX * newZoom - viewportPoint.X;
-            double newOffsetY = contentY * newZoom - viewportPoint.Y;
-
-            PdfScrollViewer.ScrollToHorizontalOffset(Math.Max(0, newOffsetX));
-            PdfScrollViewer.ScrollToVerticalOffset(Math.Max(0, newOffsetY));
-
-            // Sync smooth scroll target
-            _targetVerticalOffset = PdfScrollViewer.VerticalOffset;
-            _targetHorizontalOffset = PdfScrollViewer.HorizontalOffset;
-            _smoothScrollInitialized = true;
-
-            ScheduleReRenderForZoom();
-
-            UpdateZoomLabel();
+                PdfScrollViewer.ScrollToHorizontalOffset(newOffsetX);
+                PdfScrollViewer.ScrollToVerticalOffset(newOffsetY);
+                _targetVerticalOffset = PdfScrollViewer.VerticalOffset;
+                _targetHorizontalOffset = PdfScrollViewer.HorizontalOffset;
+                _smoothScrollInitialized = true;
+            }), System.Windows.Threading.DispatcherPriority.Background);
         }
 
-        // ─── Touch Manipulation (pinch-to-zoom + pan) ───
+        // 閳光偓閳光偓閳光偓 Touch Manipulation (pinch-to-zoom + pan) 閳光偓閳光偓閳光偓
         private void PdfScrollViewer_ManipulationStarting(object sender, ManipulationStartingEventArgs e)
         {
             // Only handle multi-finger gestures (pinch-to-zoom, two-finger pan).
@@ -469,14 +595,14 @@ namespace WindowsNotesApp.Pages
             e.Handled = true;
         }
 
-        // ─── Smooth scroll animation (vertical) ───
+        // 閳光偓閳光偓閳光偓 Smooth scroll animation (vertical) 閳光偓閳光偓閳光偓
         private double _scrollAnimationTarget;
         private double _scrollAnimationStart;
         private DateTime _scrollAnimationStartTime;
         private TimeSpan _scrollAnimationDuration;
         private bool _isScrollAnimating;
 
-        // ─── Smooth scroll animation (horizontal) ───
+        // 閳光偓閳光偓閳光偓 Smooth scroll animation (horizontal) 閳光偓閳光偓閳光偓
         private double _hScrollAnimationTarget;
         private double _hScrollAnimationStart;
         private DateTime _hScrollAnimationStartTime;
@@ -547,7 +673,7 @@ namespace WindowsNotesApp.Pages
         {
             // Only handle pen (not finger touch) for stylus-drag scrolling.
             // Finger touch should go through to ManipulationDelta for pinch-to-zoom.
-            // Include both Stylus and Touch tablet types — some Huawei MateBook
+            // Include both Stylus and Touch tablet types 閳?some Huawei MateBook
             // digitizers report the M-Pencil as Touch rather than Stylus.
             bool isPenDevice = e.StylusDevice?.TabletDevice?.Type == TabletDeviceType.Stylus;
 
@@ -601,7 +727,7 @@ namespace WindowsNotesApp.Pages
             }
         }
 
-        // ─── Middle mouse button panning ───
+        // 閳光偓閳光偓閳光偓 Middle mouse button panning 閳光偓閳光偓閳光偓
         private void PdfScrollViewer_PreviewMouseDown(object sender, MouseButtonEventArgs e)
         {
             if (e.ChangedButton == MouseButton.Middle)
@@ -643,6 +769,17 @@ namespace WindowsNotesApp.Pages
 
         private void SetZoom(double level)
         {
+            if (IsSelectablePdfSurfaceActive)
+            {
+                ApplySelectableViewerZoom(level);
+                return;
+            }
+
+            ApplyCustomZoom(level);
+        }
+
+        private void ApplyCustomZoom(double level)
+        {
             _zoomLevel = Math.Max(ZoomMin, Math.Min(ZoomMax, level));
             PagesZoomTransform.ScaleX = _zoomLevel;
             PagesZoomTransform.ScaleY = _zoomLevel;
@@ -651,6 +788,7 @@ namespace WindowsNotesApp.Pages
 
             // Sync smooth scroll state
             _targetVerticalOffset = PdfScrollViewer.VerticalOffset;
+            _targetHorizontalOffset = PdfScrollViewer.HorizontalOffset;
             _smoothScrollInitialized = true;
 
             // Re-render pages at higher DPI when zoomed in (debounced)
@@ -689,10 +827,8 @@ namespace WindowsNotesApp.Pages
         }
 
         /// <summary>
-        /// Called on scroll — lazily render pages that haven't been rendered yet
-        /// (progressive loading) and re-render at higher DPI when zoomed in.
-        /// Uses a scroll-anchor to prevent the view from jumping when off-screen
-        /// pages change size during rendering.
+        /// Called on scroll to lazily render pages that are entering the viewport and
+        /// re-render visible pages at higher DPI after zooming.
         /// </summary>
         private async void PdfScrollViewer_ScrollChanged(object sender, ScrollChangedEventArgs e)
         {
@@ -702,34 +838,21 @@ namespace WindowsNotesApp.Pages
 
             try
             {
-                // Small debounce so we don't re-render on every scroll tick
                 await Task.Delay(100, token);
                 token.ThrowIfCancellationRequested();
 
                 var visiblePages = GetVisiblePageControls();
-
-                // Progressive loading: render pages that haven't been rendered at all yet
                 var needsInitialRender = visiblePages
                     .Where(p => !_pagesInitiallyRendered.Contains(p.PageIndex))
                     .ToList();
 
-                if (needsInitialRender.Count > 0)
+                foreach (var page in needsInitialRender)
                 {
-                    // Snapshot anchor before any rendering
-                    var anchor = CaptureScrollAnchor();
-
-                    foreach (var page in needsInitialRender)
-                    {
-                        token.ThrowIfCancellationRequested();
-                        await RenderPageInitialAsync(page, token);
-                    }
-
-                    // Restore anchor – this keeps the user's view rock-steady
-                    RestoreScrollAnchor(anchor);
+                    token.ThrowIfCancellationRequested();
+                    await RenderPageInitialAsync(page, token);
                 }
 
-                // Zoom re-render: upgrade pages to higher DPI when zoomed in
-                if (_lastRenderedDpiScale > 1.0 && _pagesRenderedAtScale.Count < PagesContainer.Children.Count)
+                if (_lastRenderedDpiScale > 1.0 && _pagesRenderedAtScale.Count < _pageControls.Count)
                 {
                     var needsZoomRender = visiblePages
                         .Where(p => !_pagesRenderedAtScale.Contains(p.PageIndex))
@@ -742,78 +865,36 @@ namespace WindowsNotesApp.Pages
             catch (OperationCanceledException) { }
         }
 
-        // ─── Scroll Anchor: keeps the user's view locked in place ───
-
         private struct ScrollAnchor
         {
             public PdfPageControl AnchorPage;
-            public double OffsetFromViewportTop; // how far the page top sits from the viewport top (can be negative)
+            public double OffsetFromViewportTop;
         }
 
-        /// <summary>
-        /// Captures the page closest to the top of the viewport and its exact
-        /// y-offset relative to the viewport. This lets us restore the exact
-        /// same view after layout changes.
-        /// </summary>
         private ScrollAnchor CaptureScrollAnchor()
         {
-            var anchor = new ScrollAnchor();
-            double bestDist = double.MaxValue;
+            var visiblePages = GetVisiblePageControls();
+            if (visiblePages.Count == 0)
+                return default;
 
-            foreach (UIElement child in PagesContainer.Children)
+            var anchorPage = visiblePages[0];
+            return new ScrollAnchor
             {
-                if (child is PdfPageControl page)
-                {
-                    try
-                    {
-                        var transform = page.TransformToAncestor(PdfScrollViewer);
-                        var topLeft = transform.Transform(new Point(0, 0));
-                        // topLeft.Y is the position of the page top relative to the viewport top
-                        // (negative = page starts above viewport, positive = below)
-                        double dist = Math.Abs(topLeft.Y);
-                        if (dist < bestDist)
-                        {
-                            bestDist = dist;
-                            anchor.AnchorPage = page;
-                            anchor.OffsetFromViewportTop = topLeft.Y;
-                        }
-                    }
-                    catch { }
-                }
-            }
-
-            return anchor;
+                AnchorPage = anchorPage,
+                OffsetFromViewportTop = GetScaledPageTop(anchorPage.PageIndex) - PdfScrollViewer.VerticalOffset
+            };
         }
 
-        /// <summary>
-        /// After layout has changed (pages rendered / resized), snaps the
-        /// ScrollViewer so the anchor page sits at the same viewport position.
-        /// </summary>
         private void RestoreScrollAnchor(ScrollAnchor anchor)
         {
-            if (anchor.AnchorPage == null) return;
+            if (anchor.AnchorPage == null)
+                return;
 
-            try
-            {
-                PdfScrollViewer.UpdateLayout();
-                var transform = anchor.AnchorPage.TransformToAncestor(PdfScrollViewer);
-                var currentTopLeft = transform.Transform(new Point(0, 0));
-
-                double drift = currentTopLeft.Y - anchor.OffsetFromViewportTop;
-                if (Math.Abs(drift) > 0.5)
-                {
-                    double newOffset = PdfScrollViewer.VerticalOffset + drift;
-                    PdfScrollViewer.ScrollToVerticalOffset(Math.Max(0, newOffset));
-                    _targetVerticalOffset = PdfScrollViewer.VerticalOffset;
-                }
-            }
-            catch { /* page may no longer be in tree */ }
+            double newOffset = GetScaledPageTop(anchor.AnchorPage.PageIndex) - anchor.OffsetFromViewportTop;
+            PdfScrollViewer.ScrollToVerticalOffset(Math.Max(0, newOffset));
+            _targetVerticalOffset = PdfScrollViewer.VerticalOffset;
         }
 
-        /// <summary>
-        /// Re-renders a list of page controls at the given DPI scale using
-        /// the fast BitmapSource path (no PNG encode/decode).
-        /// </summary>
         private async Task ReRenderPagesAsync(List<PdfPageControl> pages, double dpiScale, CancellationToken token)
         {
             foreach (var page in pages)
@@ -830,41 +911,68 @@ namespace WindowsNotesApp.Pages
                     }
                 }
                 catch (OperationCanceledException) { throw; }
-                catch { /* skip failed page, keep going */ }
+                catch { }
             }
         }
 
-        /// <summary>
-        /// Returns PdfPageControl instances that are currently visible (or nearly visible)
-        /// in the ScrollViewer viewport.
-        /// </summary>
+        private double GetScaledPageTop(int pageIndex)
+            => pageIndex >= 0 && pageIndex < _pageTopOffsets.Count ? _pageTopOffsets[pageIndex] * _zoomLevel : 0;
+
+        private double GetScaledPageHeight(int pageIndex)
+            => pageIndex >= 0 && pageIndex < _pageHeights.Count ? _pageHeights[pageIndex] * _zoomLevel : 0;
+
+        private int FindFirstVisiblePageIndex(double viewTop)
+        {
+            int lo = 0;
+            int hi = _pageControls.Count - 1;
+            int result = _pageControls.Count - 1;
+
+            while (lo <= hi)
+            {
+                int mid = lo + ((hi - lo) / 2);
+                double pageBottom = GetScaledPageTop(mid) + GetScaledPageHeight(mid);
+                if (pageBottom >= viewTop)
+                {
+                    result = mid;
+                    hi = mid - 1;
+                }
+                else
+                {
+                    lo = mid + 1;
+                }
+            }
+
+            return Math.Max(0, result);
+        }
+
         private List<PdfPageControl> GetVisiblePageControls()
         {
             var result = new List<PdfPageControl>();
-            if (PagesContainer.Children.Count == 0) return result;
+            if (_pageControls.Count == 0)
+                return result;
 
-            double viewTop = PdfScrollViewer.VerticalOffset;
-            double viewBottom = viewTop + PdfScrollViewer.ViewportHeight;
-
-            // Add generous margin (~half viewport) so we pre-render pages just off-screen
-            double margin = PdfScrollViewer.ViewportHeight * 0.5;
-            viewTop = Math.Max(0, viewTop - margin);
-            viewBottom += margin;
-
-            foreach (UIElement child in PagesContainer.Children)
+            double viewportHeight = PdfScrollViewer.ViewportHeight;
+            if (viewportHeight <= 0)
             {
-                if (child is PdfPageControl page)
-                {
-                    // Get the page's position relative to the ScrollViewer
-                    var transform = page.TransformToAncestor(PdfScrollViewer);
-                    var topLeft = transform.Transform(new Point(0, 0));
-                    double pageTop = topLeft.Y + PdfScrollViewer.VerticalOffset;
-                    double pageBottom = pageTop + page.ActualHeight * _zoomLevel;
+                int initialCount = Math.Min(2, _pageControls.Count);
+                for (int i = 0; i < initialCount; i++)
+                    result.Add(_pageControls[i]);
+                return result;
+            }
 
-                    // Check overlap with viewport
-                    if (pageBottom >= viewTop && pageTop <= viewBottom)
-                        result.Add(page);
-                }
+            double viewTop = Math.Max(0, PdfScrollViewer.VerticalOffset - (viewportHeight * 0.5));
+            double viewBottom = PdfScrollViewer.VerticalOffset + viewportHeight + (viewportHeight * 0.5);
+            int startIndex = FindFirstVisiblePageIndex(viewTop);
+
+            for (int i = startIndex; i < _pageControls.Count; i++)
+            {
+                double pageTop = GetScaledPageTop(i);
+                if (pageTop > viewBottom)
+                    break;
+
+                double pageBottom = pageTop + GetScaledPageHeight(i);
+                if (pageBottom >= viewTop)
+                    result.Add(_pageControls[i]);
             }
 
             return result;
@@ -925,7 +1033,7 @@ namespace WindowsNotesApp.Pages
             string sizeLabel, double min, double max, double value, double step, Action<double> sizeChanged,
             string colorLabel, Color initialColor, Action<Color> colorChanged)
         {
-            var popup = new Popup { Placement = PlacementMode.Bottom, StaysOpen = false, AllowsTransparency = true };
+            var popup = new Popup { Placement = PlacementMode.Bottom, StaysOpen = true, AllowsTransparency = true };
             var panel = new StackPanel { Margin = new Thickness(16) };
             var border = new Border
             {
@@ -1025,12 +1133,12 @@ namespace WindowsNotesApp.Pages
                             double val = 1.0;
                             if (row <= rows / 2)
                             {
-                                // Top half: full value, varying saturation (light → saturated)
+                                // Top half: full value, varying saturation (light 閳?saturated)
                                 saturation = (double)row / (rows / 2);
                             }
                             else
                             {
-                                // Bottom half: full saturation, decreasing value (saturated → dark)
+                                // Bottom half: full saturation, decreasing value (saturated 閳?dark)
                                 val = 1.0 - (double)(row - rows / 2) / (rows / 2);
                             }
                             cellColor = HsvToColor(hue, saturation, val);
@@ -1081,6 +1189,50 @@ namespace WindowsNotesApp.Pages
             return popup;
         }
 
+        private void EditorPage_PreviewMouseDown(object sender, MouseButtonEventArgs e)
+        {
+            CloseToolPopups();
+        }
+
+        private void EditorPage_PreviewStylusDown(object sender, StylusDownEventArgs e)
+        {
+            CloseToolPopups();
+        }
+
+        private void CloseToolPopups(ToolType toolToKeepOpen = ToolType.None)
+        {
+            if (toolToKeepOpen != ToolType.Pen && _penPopup != null)
+                _penPopup.IsOpen = false;
+
+            if (toolToKeepOpen != ToolType.Highlighter && _highlighterPopup != null)
+                _highlighterPopup.IsOpen = false;
+
+            if (toolToKeepOpen != ToolType.Eraser && _eraserPopup != null)
+                _eraserPopup.IsOpen = false;
+        }
+
+        private void ToggleToolButton(ToolType tool, Button button, Popup popup = null)
+        {
+            if (_isUpdatingToolState) return;
+
+            var isActiveTool = _currentTool == tool;
+            CloseToolPopups();
+
+            if (isActiveTool)
+            {
+                ActivateTool(ToolType.None);
+                return;
+            }
+
+            ActivateTool(tool);
+
+            if (popup != null)
+            {
+                popup.PlacementTarget = button;
+                popup.IsOpen = true;
+            }
+        }
+
         public async Task LoadPdfAsync(string filePath)
         {
             _currentPdfPath = filePath;
@@ -1100,21 +1252,26 @@ namespace WindowsNotesApp.Pages
             ShowLoadingOverlay();
             DetachAllPageControlEvents();
             PagesContainer.Children.Clear();
+            _pageControls.Clear();
+            _pageTopOffsets.Clear();
+            _pageHeights.Clear();
             DeselectTextBox();
             _isDirty = false;
             _lastRenderedDpiScale = 1.0;
             _pagesRenderedAtScale.Clear();
             _pagesInitiallyRendered.Clear();
+            DisposeSelectablePdfDocument();
+            UpdatePdfSurfaceVisibility();
 
             try
             {
                 await _pdfService.LoadPdfAsync(filePath, token);
+                await LoadSelectablePdfDocumentAsync(filePath, token);
+                RecentFilesService.UpdateMetadata(filePath, _pdfService.PageCount, File.GetLastWriteTimeUtc(filePath));
 
                 int pageCount = _pdfService.PageCount;
+                double currentTop = 0;
 
-                // Phase 1: Create placeholder page controls with correct dimensions
-                // (fast – no rendering). This lets the UI appear quickly even for
-                // very large documents.
                 for (int i = 0; i < pageCount; i++)
                 {
                     token.ThrowIfCancellationRequested();
@@ -1122,7 +1279,7 @@ namespace WindowsNotesApp.Pages
                     var (w, h) = _pdfService.GetPageSizeInDips(i);
                     if (w <= 0 || h <= 0)
                     {
-                        w = 1584; // A4 at 192 DPI fallback
+                        w = 1584;
                         h = 2245;
                     }
 
@@ -1130,7 +1287,8 @@ namespace WindowsNotesApp.Pages
                     {
                         PageIndex = i,
                         Width = w,
-                        Height = h
+                        Height = h,
+                        Margin = new Thickness(0, 0, 0, PageSpacing)
                     };
 
                     pageControl.TextOverlayPointerPressed += PageControl_TextOverlayPointerPressed;
@@ -1142,22 +1300,21 @@ namespace WindowsNotesApp.Pages
                     if (_penService != null)
                         pageControl.SetPenService(_penService);
 
+                    _pageControls.Add(pageControl);
+                    _pageTopOffsets.Add(currentTop);
+                    _pageHeights.Add(h);
+                    currentTop += h + PageSpacing;
                     PagesContainer.Children.Add(pageControl);
                 }
 
                 ApplyToolToAllPages();
 
-                // Force layout so TransformToAncestor works for visibility checks
-                PdfScrollViewer.UpdateLayout();
-
-                // Reset scroll position: top-left, centered horizontally
                 PdfScrollViewer.ScrollToVerticalOffset(0);
                 PdfScrollViewer.ScrollToHorizontalOffset(0);
                 _targetVerticalOffset = 0;
                 _targetHorizontalOffset = 0;
                 _smoothScrollInitialized = true;
 
-                // Phase 2: Render only the initially visible pages (typically 1-3)
                 var visiblePages = GetVisiblePageControls();
                 foreach (var page in visiblePages)
                 {
@@ -1165,15 +1322,13 @@ namespace WindowsNotesApp.Pages
                     await RenderPageInitialAsync(page, token);
                 }
 
-                // Phase 3: Load annotations
                 if (!string.IsNullOrEmpty(_currentPdfPath))
-                {
                     await LoadAnnotationsFromPdfServiceAsync();
-                }
+
+                SyncSelectableViewerFromCustomView();
             }
             catch (OperationCanceledException)
             {
-                // silently handle cancellation
             }
             catch (Exception ex)
             {
@@ -1182,9 +1337,7 @@ namespace WindowsNotesApp.Pages
                     errorMsg += $"\n\nDetails: {ex.InnerException.Message}";
 
                 if (sessionId == _loadSessionId)
-                {
                     MessageBox.Show(errorMsg, "Error", MessageBoxButton.OK, MessageBoxImage.Error);
-                }
             }
             finally
             {
@@ -1196,7 +1349,7 @@ namespace WindowsNotesApp.Pages
         /// <summary>
         /// Renders a single page's initial image using the fast BitmapSource path.
         /// Only renders if the page hasn't been rendered yet.
-        /// Does NOT adjust scroll — the caller is responsible for anchor save/restore.
+        /// Does NOT adjust scroll 閳?the caller is responsible for anchor save/restore.
         /// </summary>
         private async Task RenderPageInitialAsync(PdfPageControl page, CancellationToken token)
         {
@@ -1209,8 +1362,6 @@ namespace WindowsNotesApp.Pages
                 {
                     token.ThrowIfCancellationRequested();
                     page.PageSource = bitmapSource;
-                    page.Width = bitmapSource.Width;
-                    page.Height = bitmapSource.Height;
                     _pagesInitiallyRendered.Add(page.PageIndex);
                 }
             }
@@ -1237,71 +1388,35 @@ namespace WindowsNotesApp.Pages
 
         private void PenToolButton_Click(object sender, RoutedEventArgs e)
         {
-            if (_isUpdatingToolState) return;
-            if (_currentTool == ToolType.Pen)
-            {
-                ActivateTool(ToolType.None);
-            }
-            else
-            {
-                ActivateTool(ToolType.Pen);
-                _penPopup.PlacementTarget = PenToolButton;
-                _penPopup.IsOpen = true;
-            }
+            ToggleToolButton(ToolType.Pen, PenToolButton, _penPopup);
         }
 
         private void HighlighterToolButton_Click(object sender, RoutedEventArgs e)
         {
-            if (_isUpdatingToolState) return;
-            if (_currentTool == ToolType.Highlighter)
-            {
-                ActivateTool(ToolType.None);
-            }
-            else
-            {
-                ActivateTool(ToolType.Highlighter);
-                _highlighterPopup.PlacementTarget = HighlighterToolButton;
-                _highlighterPopup.IsOpen = true;
-            }
+            ToggleToolButton(ToolType.Highlighter, HighlighterToolButton, _highlighterPopup);
         }
 
         private void EraserToolButton_Click(object sender, RoutedEventArgs e)
         {
-            if (_isUpdatingToolState) return;
-            if (_currentTool == ToolType.Eraser)
-            {
-                ActivateTool(ToolType.None);
-            }
-            else
-            {
-                ActivateTool(ToolType.Eraser);
-                _eraserPopup.PlacementTarget = EraserToolButton;
-                _eraserPopup.IsOpen = true;
-            }
+            ToggleToolButton(ToolType.Eraser, EraserToolButton, _eraserPopup);
         }
 
         private void TextToolButton_Click(object sender, RoutedEventArgs e)
         {
-            if (_isUpdatingToolState) return;
-            if (_currentTool == ToolType.Text)
-            {
-                ActivateTool(ToolType.None);
-            }
-            else
-            {
-                ActivateTool(ToolType.Text);
-            }
+            ToggleToolButton(ToolType.Text, TextToolButton);
         }
-
         private void ActivateTool(ToolType tool)
         {
             if (_currentTool == tool) return;
+
+            bool wasSelectableSurfaceActive = IsSelectablePdfSurfaceActive;
 
             if (tool != ToolType.Text)
                 DeselectTextBox();
 
             _isUpdatingToolState = true;
             _currentTool = tool;
+            CloseToolPopups(tool);
 
             PenToolButton.Background = tool == ToolType.Pen ? new SolidColorBrush(Color.FromArgb(34, 0, 120, 212)) : Brushes.Transparent;
             HighlighterToolButton.Background = tool == ToolType.Highlighter ? new SolidColorBrush(Color.FromArgb(34, 0, 120, 212)) : Brushes.Transparent;
@@ -1312,6 +1427,16 @@ namespace WindowsNotesApp.Pages
 
             UpdateToolIconColors();
             ApplyToolToAllPages();
+            UpdatePdfSurfaceVisibility();
+
+            if (wasSelectableSurfaceActive && !IsSelectablePdfSurfaceActive)
+            {
+                SyncCustomSurfaceFromSelectableViewer();
+            }
+            else if (!wasSelectableSurfaceActive && IsSelectablePdfSurfaceActive)
+            {
+                SyncSelectableViewerFromCustomView();
+            }
         }
 
         private void UpdateToolIconColors()
@@ -1321,44 +1446,41 @@ namespace WindowsNotesApp.Pages
 
         private void ApplyToolToAllPages()
         {
-            foreach (var child in PagesContainer.Children)
+            foreach (var page in _pageControls)
             {
-                if (child is PdfPageControl page)
+                page.SetMode(_currentTool == ToolType.Text);
+                var atts = page.CopyDefaultDrawingAttributes();
+
+                switch (_currentTool)
                 {
-                    page.SetMode(_currentTool == ToolType.Text);
-                    var atts = page.CopyDefaultDrawingAttributes();
-
-                    switch (_currentTool)
-                    {
-                        case ToolType.None:
-                            page.SetInputMode(CustomInkInputProcessingMode.None);
-                            break;
-                        case ToolType.Pen:
-                            page.SetInputMode(CustomInkInputProcessingMode.Inking);
-                            atts.Color = _penColor;
-                            atts.Width = _penSize;
-                            atts.Height = _penSize;
-                            atts.IsHighlighter = false;
-                            page.SetInkAttributes(atts);
-                            break;
-                        case ToolType.Highlighter:
-                            page.SetInputMode(CustomInkInputProcessingMode.Inking);
-                            atts.Color = _highlighterColor;
-                            atts.Width = _highlighterSize;
-                            atts.Height = _highlighterSize;
-                            atts.IsHighlighter = true;
-                            page.SetInkAttributes(atts);
-                            break;
-                        case ToolType.Eraser:
-                            page.SetInputMode(CustomInkInputProcessingMode.Erasing);
-                            break;
-                        case ToolType.Text:
-                            page.SetInputMode(CustomInkInputProcessingMode.None);
-                            break;
-                    }
-
-                    page.SetEraserSize(_eraserSize);
+                    case ToolType.None:
+                        page.SetInputMode(CustomInkInputProcessingMode.None);
+                        break;
+                    case ToolType.Pen:
+                        page.SetInputMode(CustomInkInputProcessingMode.Inking);
+                        atts.Color = _penColor;
+                        atts.Width = _penSize;
+                        atts.Height = _penSize;
+                        atts.IsHighlighter = false;
+                        page.SetInkAttributes(atts);
+                        break;
+                    case ToolType.Highlighter:
+                        page.SetInputMode(CustomInkInputProcessingMode.Inking);
+                        atts.Color = _highlighterColor;
+                        atts.Width = _highlighterSize;
+                        atts.Height = _highlighterSize;
+                        atts.IsHighlighter = true;
+                        page.SetInkAttributes(atts);
+                        break;
+                    case ToolType.Eraser:
+                        page.SetInputMode(CustomInkInputProcessingMode.Erasing);
+                        break;
+                    case ToolType.Text:
+                        page.SetInputMode(CustomInkInputProcessingMode.None);
+                        break;
                 }
+
+                page.SetEraserSize(_eraserSize);
             }
         }
 
@@ -1471,7 +1593,7 @@ namespace WindowsNotesApp.Pages
                 Background = Brushes.Transparent,
                 BorderThickness = new Thickness(0),
                 Cursor = Cursors.Hand,
-                ToolTip = "Delete",
+                ToolTip = LocalizationService.Get("Editor.DeleteTooltip"),
                 Margin = new Thickness(2)
             };
             deleteButton.Template = CreateIconButtonTemplate("#FECACA", "#FCA5A5");
@@ -1706,15 +1828,15 @@ namespace WindowsNotesApp.Pages
             if (_selectedTextBox != null)
             {
                 DeselectTextBox();
-                e.Handled = true;
-                return;
             }
 
-            CreateTextBox(page, point);
+            CreateTextBox(page, point, alignToPointer: true);
+            e.Handled = true;
         }
 
-        private void CreateTextBox(PdfPageControl page, Point position, Color? color = null, double? fontSize = null, string text = null, bool select = true)
+        private void CreateTextBox(PdfPageControl page, Point position, Color? color = null, double? fontSize = null, string text = null, bool select = true, bool alignToPointer = false)
         {
+            var textPadding = new Thickness(10, 8, 10, 8);
             var container = new Grid { Background = Brushes.Transparent };
 
             container.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
@@ -1744,7 +1866,7 @@ namespace WindowsNotesApp.Pages
                 FontSize = fontSize ?? _currentFontSize,
                 Foreground = new SolidColorBrush(color ?? _textColor),
                 IsReadOnly = !select,
-                Padding = new Thickness(10, 8, 10, 8),
+                Padding = textPadding,
                 CaretBrush = new SolidColorBrush(Color.FromRgb(0, 120, 212))
             };
 
@@ -1780,8 +1902,16 @@ namespace WindowsNotesApp.Pages
             container.Children.Add(textBox);
             container.Children.Add(dragHandle);
 
-            Canvas.SetLeft(container, position.X);
-            Canvas.SetTop(container, position.Y);
+            var initialLeft = position.X;
+            var initialTop = position.Y;
+            if (alignToPointer)
+            {
+                initialLeft -= textPadding.Left;
+                initialTop -= textPadding.Top;
+            }
+
+            Canvas.SetLeft(container, Math.Max(0, initialLeft));
+            Canvas.SetTop(container, Math.Max(0, initialTop));
             Panel.SetZIndex(container, 1000);
 
             dragHandle.MouseLeftButtonDown += DragHandle_MouseLeftButtonDown;
@@ -1823,11 +1953,8 @@ namespace WindowsNotesApp.Pages
                 if (tb != null) SelectTextBox(tb);
             }
 
-            var pointOnHandle = e.GetPosition(handle);
-
             _dragArmed = true;
             _draggedContainer = handle?.Parent as Grid;
-            _dragStartOffset = pointOnHandle;
             if (_draggedContainer?.Parent is Canvas canvas)
                 _dragPressPointOnCanvas = e.GetPosition(canvas);
             if (_draggedContainer != null)
@@ -1862,8 +1989,12 @@ namespace WindowsNotesApp.Pages
 
             if (_isDragging)
             {
-                var newX = currentPoint.X - _dragStartOffset.X;
-                var newY = currentPoint.Y - _dragStartOffset.Y;
+                var dx = currentPoint.X - _dragPressPointOnCanvas.X;
+                var dy = currentPoint.Y - _dragPressPointOnCanvas.Y;
+                var maxX = Math.Max(0, canvas.ActualWidth - _draggedContainer.ActualWidth);
+                var maxY = Math.Max(0, canvas.ActualHeight - _draggedContainer.ActualHeight);
+                var newX = Math.Max(0, Math.Min(_dragStartX + dx, maxX));
+                var newY = Math.Max(0, Math.Min(_dragStartY + dy, maxY));
                 Canvas.SetLeft(_draggedContainer, newX);
                 Canvas.SetTop(_draggedContainer, newY);
                 e.Handled = true;
@@ -1950,45 +2081,42 @@ namespace WindowsNotesApp.Pages
         private Dictionary<int, PageAnnotation> CollectAnnotations()
         {
             var annotations = new Dictionary<int, PageAnnotation>();
-            foreach (var child in PagesContainer.Children)
+            foreach (var page in _pageControls)
             {
-                if (child is PdfPageControl page)
+                var pa = new PageAnnotation();
+                pa.Strokes = page.GetStrokeData();
+
+                foreach (var element in page.TextOverlay.Children)
                 {
-                    var pa = new PageAnnotation();
-                    pa.Strokes = page.GetStrokeData();
-
-                    foreach (var element in page.TextOverlay.Children)
+                    var containerTb = (element is Grid container) ? container.Children.OfType<TextBox>().FirstOrDefault() : null;
+                    if (containerTb != null)
                     {
-                        var containerTb = (element is Grid container) ? container.Children.OfType<TextBox>().FirstOrDefault() : null;
-                        if (containerTb != null)
+                        var color = (containerTb.Foreground as SolidColorBrush)?.Color ?? Colors.Black;
+                        pa.Texts.Add(new TextAnnotation
                         {
-                            var color = (containerTb.Foreground as SolidColorBrush)?.Color ?? Colors.Black;
-                            pa.Texts.Add(new TextAnnotation
-                            {
-                                Text = containerTb.Text,
-                                X = Canvas.GetLeft((Grid)containerTb.Parent),
-                                Y = Canvas.GetTop((Grid)containerTb.Parent),
-                                R = color.R, G = color.G, B = color.B,
-                                FontSize = containerTb.FontSize
-                            });
-                        }
-                        else if (element is TextBox tb)
-                        {
-                            var color = (tb.Foreground as SolidColorBrush)?.Color ?? Colors.Black;
-                            pa.Texts.Add(new TextAnnotation
-                            {
-                                Text = tb.Text,
-                                X = Canvas.GetLeft(tb),
-                                Y = Canvas.GetTop(tb),
-                                R = color.R, G = color.G, B = color.B,
-                                FontSize = tb.FontSize
-                            });
-                        }
+                            Text = containerTb.Text,
+                            X = Canvas.GetLeft((Grid)containerTb.Parent),
+                            Y = Canvas.GetTop((Grid)containerTb.Parent),
+                            R = color.R, G = color.G, B = color.B,
+                            FontSize = containerTb.FontSize
+                        });
                     }
-
-                    if (pa.Strokes.Count > 0 || pa.Texts.Count > 0)
-                        annotations[page.PageIndex] = pa;
+                    else if (element is TextBox tb)
+                    {
+                        var color = (tb.Foreground as SolidColorBrush)?.Color ?? Colors.Black;
+                        pa.Texts.Add(new TextAnnotation
+                        {
+                            Text = tb.Text,
+                            X = Canvas.GetLeft(tb),
+                            Y = Canvas.GetTop(tb),
+                            R = color.R, G = color.G, B = color.B,
+                            FontSize = tb.FontSize
+                        });
+                    }
                 }
+
+                if (pa.Strokes.Count > 0 || pa.Texts.Count > 0)
+                    annotations[page.PageIndex] = pa;
             }
             return annotations;
         }
@@ -2004,9 +2132,9 @@ namespace WindowsNotesApp.Pages
 
             try
             {
-                foreach (var child in PagesContainer.Children)
+                foreach (var page in _pageControls)
                 {
-                    if (child is PdfPageControl page && _pdfService.ExtractedAnnotations.TryGetValue(page.PageIndex, out var pa))
+                    if (_pdfService.ExtractedAnnotations.TryGetValue(page.PageIndex, out var pa))
                     {
                         foreach (var sa in pa.Strokes)
                         {
@@ -2053,11 +2181,13 @@ namespace WindowsNotesApp.Pages
         private void ShowLoadingOverlay()
         {
             LoadingOverlay.Visibility = Visibility.Visible;
+            UpdatePdfSurfaceVisibility();
         }
 
         private void HideLoadingOverlay()
         {
             LoadingOverlay.Visibility = Visibility.Collapsed;
+            UpdatePdfSurfaceVisibility();
         }
 
         private void CancelActiveLoad()
@@ -2068,15 +2198,12 @@ namespace WindowsNotesApp.Pages
 
         private void DetachAllPageControlEvents()
         {
-            foreach (var child in PagesContainer.Children)
+            foreach (var pageControl in _pageControls)
             {
-                if (child is PdfPageControl pageControl)
-                {
-                    pageControl.TextOverlayPointerPressed -= PageControl_TextOverlayPointerPressed;
-                    pageControl.BackgroundPointerPressed -= PageControl_BackgroundPointerPressed;
-                    pageControl.InkMutated -= PageControl_InkMutated;
-                    pageControl.StrokeCollectedUndoable -= PageControl_StrokeCollectedUndoable;
-                }
+                pageControl.TextOverlayPointerPressed -= PageControl_TextOverlayPointerPressed;
+                pageControl.BackgroundPointerPressed -= PageControl_BackgroundPointerPressed;
+                pageControl.InkMutated -= PageControl_InkMutated;
+                pageControl.StrokeCollectedUndoable -= PageControl_StrokeCollectedUndoable;
             }
         }
 
@@ -2161,3 +2288,11 @@ namespace WindowsNotesApp.Pages
         }
     }
 }
+
+
+
+
+
+
+
+

@@ -497,3 +497,7 @@ $RECYCLE.BIN/
 # Build Logs
 build*.log
 build_log.txt
+
+# Local .NET tooling state
+.dotnet-cli/
+.dotnet-home/

@@ -1,10 +1,16 @@
-<Application
+﻿<Application
     x:Class="WindowsNotesApp.App"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
     <Application.Resources>
         <ResourceDictionary>
-            <!-- ═══════════════════ Sleek ScrollBar ═══════════════════ -->
+            <SolidColorBrush x:Key="AppGlassPanelBrush" Color="White" Opacity="0.14"/>
+            <SolidColorBrush x:Key="AppGlassSurfaceBrush" Color="White" Opacity="0.18"/>
+            <SolidColorBrush x:Key="AppGlassSurfaceHoverBrush" Color="White" Opacity="0.26"/>
+            <SolidColorBrush x:Key="AppGlassSurfacePressedBrush" Color="White" Opacity="0.32"/>
+            <SolidColorBrush x:Key="AppGlassBorderBrush" Color="White" Opacity="0.34"/>
+            <SolidColorBrush x:Key="AppGlassSubtleBorderBrush" Color="White" Opacity="0.18"/>
+            <!-- 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?Sleek ScrollBar 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?-->
             <Style x:Key="SleekScrollBarThumb" TargetType="Thumb">
                 <Setter Property="OverridesDefaultStyle" Value="True"/>
                 <Setter Property="IsTabStop" Value="False"/>
@@ -80,7 +86,7 @@
                 </Setter>
             </Style>
 
-            <!-- ═══════════════════ Modern ComboBox ═══════════════════ -->
+            <!-- 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?Modern ComboBox 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?-->
             <Style x:Key="ModernComboBox" TargetType="ComboBox">
                 <Setter Property="Background" Value="#F0F0F0"/>
                 <Setter Property="Foreground" Value="#333"/>
@@ -159,7 +165,7 @@
                 </Setter>
             </Style>
 
-            <!-- ═══════════════════ Modern Dialog Button ═══════════════════ -->
+            <!-- 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?Modern Dialog Button 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?-->
             <Style x:Key="DialogPrimaryButton" TargetType="Button">
                 <Setter Property="Background" Value="#0078D4"/>
                 <Setter Property="Foreground" Value="White"/>
@@ -214,7 +220,7 @@
                 </Setter>
             </Style>
 
-            <!-- ═══════════════════ Glass Popup Border ═══════════════════ -->
+            <!-- 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?Glass Popup Border 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?-->
             <Style x:Key="GlassPopupBorder" TargetType="Border">
                 <Setter Property="Background">
                     <Setter.Value>
@@ -235,7 +241,7 @@
                 </Setter>
             </Style>
 
-            <!-- ═══════════════════ Sleek Slider ═══════════════════ -->
+            <!-- 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?Sleek Slider 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?-->
             <Style TargetType="Slider">
                 <Setter Property="OverridesDefaultStyle" Value="True"/>
                 <Setter Property="Height" Value="24"/>
@@ -296,7 +302,7 @@
                 </Setter>
             </Style>
 
-            <!-- ═══════════════════ Windows 11 Context Menu ═══════════════════ -->
+            <!-- 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?Windows 11 Context Menu 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?-->
             <Style TargetType="ContextMenu">
                 <Setter Property="SnapsToDevicePixels" Value="True"/>
                 <Setter Property="OverridesDefaultStyle" Value="True"/>
@@ -322,7 +328,7 @@
                 </Setter>
             </Style>
 
-            <!-- ═══════════════════ Windows 11 Menu Item ═══════════════════ -->
+            <!-- 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?Windows 11 Menu Item 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?-->
             <Style TargetType="MenuItem">
                 <Setter Property="OverridesDefaultStyle" Value="True"/>
                 <Setter Property="Padding" Value="10,6"/>
@@ -360,7 +366,7 @@
                 </Setter>
             </Style>
 
-            <!-- ═══════════════════ Separator in ContextMenu ═══════════════════ -->
+            <!-- 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?Separator in ContextMenu 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?-->
             <Style x:Key="{x:Static MenuItem.SeparatorStyleKey}" TargetType="Separator">
                 <Setter Property="Height" Value="1"/>
                 <Setter Property="Margin" Value="0,4"/>

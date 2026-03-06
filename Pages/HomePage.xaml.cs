@@ -1,22 +1,20 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Diagnostics;
-using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using Microsoft.Win32;
+using WindowsNotesApp.Services;
 
 namespace WindowsNotesApp.Pages
 {
     public sealed partial class HomePage : Page
     {
         public ObservableCollection<HomeTile> HomeTiles { get; } = new ObservableCollection<HomeTile>();
-        private readonly SemaphoreSlim _recentFilesIoLock = new SemaphoreSlim(1, 1);
-        private readonly SemaphoreSlim _recentFilesLoadLock = new SemaphoreSlim(1, 1);
         private bool _recentFilesLoaded;
 
         public HomePage()
@@ -24,6 +22,7 @@ namespace WindowsNotesApp.Pages
             this.InitializeComponent();
             this.DataContext = this;
             HomeTiles.Add(HomeTile.CreateAddTile());
+            ApplyLocalization();
             Loaded += HomePage_Loaded;
         }
 
@@ -39,145 +38,35 @@ namespace WindowsNotesApp.Pages
                 return;
             }
 
-            await _recentFilesLoadLock.WaitAsync();
-            try
-            {
-                if (_recentFilesLoaded)
-                {
-                    return;
-                }
-
-                await LoadRecentFilesAsync();
-                _recentFilesLoaded = true;
-
-                // Load page counts in background
-                _ = Task.Run(() =>
-                {
-                    foreach (var tile in HomeTiles)
-                    {
-                        if (!tile.IsAddTile)
-                        {
-                            tile.LoadPageCountAsync();
-                        }
-                    }
-                });
-            }
-            finally
-            {
-                _recentFilesLoadLock.Release();
-            }
+            await LoadRecentFilesAsync();
+            _recentFilesLoaded = true;
         }
 
-        private string GetSettingsFilePath()
-        {
-            var folder = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "WindowsNotesApp");
-            System.IO.Directory.CreateDirectory(folder);
-            return System.IO.Path.Combine(folder, "recent_files.txt");
-        }
-
-        private async Task LoadRecentFilesAsync()
+        private Task LoadRecentFilesAsync()
         {
             try
             {
-                var path = GetSettingsFilePath();
-                if (System.IO.File.Exists(path))
+                foreach (var entry in RecentFilesService.GetRecentEntries())
                 {
-                    string recentFilesStr;
-                    await _recentFilesIoLock.WaitAsync();
-                    try
-                    {
-                        recentFilesStr = await System.IO.File.ReadAllTextAsync(path);
-                    }
-                    finally
-                    {
-                        _recentFilesIoLock.Release();
-                    }
+                    if (!string.Equals(System.IO.Path.GetExtension(entry.Path), ".pdf", StringComparison.OrdinalIgnoreCase))
+                        continue;
 
-                    if (!string.IsNullOrEmpty(recentFilesStr))
-                    {
-                        bool changed = false;
-                        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                        var files = recentFilesStr.Split(new[] { '|' }, StringSplitOptions.RemoveEmptyEntries);
-                        foreach (var file in files)
-                        {
-                            var trimmed = file.Trim();
-                            if (string.IsNullOrWhiteSpace(trimmed))
-                            {
-                                changed = true;
-                                continue;
-                            }
-
-                            if (!System.IO.File.Exists(trimmed))
-                            {
-                                changed = true;
-                                continue;
-                            }
-
-                            if (!string.Equals(System.IO.Path.GetExtension(trimmed), ".pdf", StringComparison.OrdinalIgnoreCase))
-                            {
-                                changed = true;
-                                continue;
-                            }
-
-                            if (!seen.Add(trimmed))
-                            {
-                                changed = true;
-                                continue;
-                            }
-
-                            HomeTiles.Add(HomeTile.CreateFileTile(trimmed));
-                        }
-
-                        if (changed)
-                        {
-                            await SaveRecentFilesAsync();
-                        }
-                    }
+                    HomeTiles.Add(HomeTile.CreateFileTile(entry));
                 }
             }
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine($"Error loading recent files: {ex.Message}");
             }
-        }
 
-        private async Task SaveRecentFilesAsync()
-        {
-            try
-            {
-                var path = GetSettingsFilePath();
-                var paths = new List<string>();
-                foreach (var item in HomeTiles)
-                {
-                    if (!item.IsAddTile && !string.IsNullOrWhiteSpace(item.Path))
-                    {
-                        paths.Add(item.Path);
-                    }
-                }
-
-                var contents = string.Join("|", paths);
-                await _recentFilesIoLock.WaitAsync();
-                try
-                {
-                    await System.IO.File.WriteAllTextAsync(path, contents);
-                }
-                finally
-                {
-                    _recentFilesIoLock.Release();
-                }
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"Error saving recent files: {ex.Message}");
-            }
+            return Task.CompletedTask;
         }
 
         public bool IsSelectionMode { get; private set; }
 
         public void ToggleSelectionMode()
         {
-            IsSelectionMode = !IsSelectionMode;
-            // In a real app, we would show checkboxes on tiles.
+            SetSelectionMode(!IsSelectionMode);
         }
 
         public void Filter(string query)
@@ -230,6 +119,12 @@ namespace WindowsNotesApp.Pages
         {
             if (sender is Button button && button.Tag is HomeTile tile)
             {
+                if (IsSelectionMode)
+                {
+                    ToggleTileSelection(tile);
+                    return;
+                }
+
                 _ = OpenRecentTileAsync(tile);
             }
         }
@@ -246,36 +141,41 @@ namespace WindowsNotesApp.Pages
                 var menu = new ContextMenu();
                 menu.Style = BuildContextMenuStyle();
 
-                var viewItem = CreateMenuItem("查看页面", "\uE7C3");
+                var viewItem = CreateMenuItem(LocalizationService.Get("Home.Context.Open"), "\uE7C3");
                 viewItem.Click += (s, ev) => _ = OpenRecentTileAsync(tile);
                 menu.Items.Add(viewItem);
 
-                var editItem = CreateMenuItem("编辑", "\uE70F");
+                var editItem = CreateMenuItem(LocalizationService.Get("Home.Context.Rename"), "\uE70F");
                 editItem.Click += async (s, ev) => await RenameTileAsync(tile);
                 menu.Items.Add(editItem);
 
-                var selectItem = CreateMenuItem("选择", "\uE762");
-                selectItem.Click += (s, ev) => ToggleSelectionMode();
+                var selectItem = CreateMenuItem(LocalizationService.Get("Home.Context.Select"), "\uE762");
+                selectItem.Click += (s, ev) =>
+                {
+                    if (!IsSelectionMode)
+                        ToggleSelectionMode();
+                    ToggleTileSelection(tile);
+                };
                 menu.Items.Add(selectItem);
 
-                var copyItem = CreateMenuItem("复制", "\uE8C8");
-                copyItem.Click += (s, ev) => {
+                var copyItem = CreateMenuItem(LocalizationService.Get("Home.Context.CopyPath"), "\uE8C8");
+                copyItem.Click += (s, ev) =>
+                {
                     try { Clipboard.SetText(tile.Path); } catch { }
                 };
                 menu.Items.Add(copyItem);
 
-                var cutItem = CreateMenuItem("剪切", "\uE8C6");
-                cutItem.Click += (s, ev) => {
-                    try { Clipboard.SetText(tile.Path); } catch { }
-                };
-                menu.Items.Add(cutItem);
+                var openFolderItem = CreateMenuItem(LocalizationService.Get("Home.Context.OpenFolder"), "\uE838");
+                openFolderItem.Click += (s, ev) => OpenContainingFolder(tile);
+                menu.Items.Add(openFolderItem);
 
-                var exportItem = CreateMenuItem("导出", "\uEDE1");
+                var exportItem = CreateMenuItem(LocalizationService.Get("Home.Context.Export"), "\uEDE1");
+                exportItem.Click += async (s, ev) => await ExportTileAsync(tile);
                 menu.Items.Add(exportItem);
 
                 menu.Items.Add(new Separator { Margin = new Thickness(0, 4, 0, 4) });
 
-                var deleteItem = CreateMenuItem("删除", "\uE74D", new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(211, 47, 47)));
+                var deleteItem = CreateMenuItem(LocalizationService.Get("Home.Context.Remove"), "\uE74D", new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(211, 47, 47)));
                 deleteItem.Click += async (s, ev) => await RemoveMissingRecentTileAsync(tile);
                 menu.Items.Add(deleteItem);
 
@@ -340,7 +240,7 @@ namespace WindowsNotesApp.Pages
 
             var titleLabel = new TextBlock
             {
-                Text = "Rename File",
+                Text = LocalizationService.Get("Home.RenameTitle"),
                 FontSize = 18,
                 FontWeight = FontWeights.SemiBold,
                 Foreground = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(30, 30, 30)),
@@ -351,7 +251,7 @@ namespace WindowsNotesApp.Pages
 
             var label = new TextBlock
             {
-                Text = "Enter a new name for this file:",
+                Text = LocalizationService.Get("Home.RenamePrompt"),
                 FontSize = 14,
                 Foreground = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(80, 80, 80)),
                 Margin = new Thickness(0, 0, 0, 8)
@@ -396,7 +296,7 @@ namespace WindowsNotesApp.Pages
 
             var cancelBtn = new Button
             {
-                Content = "Cancel",
+                Content = LocalizationService.Get("Common.Cancel"),
                 Margin = new Thickness(0, 0, 10, 0),
                 IsCancel = true
             };
@@ -414,7 +314,7 @@ namespace WindowsNotesApp.Pages
 
             var okBtn = new Button
             {
-                Content = "Rename",
+                Content = LocalizationService.Get("Home.RenameAction"),
                 IsDefault = true
             };
             var priStyle = Application.Current.TryFindResource("DialogPrimaryButton") as Style;
@@ -446,13 +346,16 @@ namespace WindowsNotesApp.Pages
                     var newPath = System.IO.Path.Combine(dir, newName + ext);
                     try
                     {
-                        System.IO.File.Move(tile.Path, newPath);
+                        var oldPath = tile.Path;
+                        System.IO.File.Move(oldPath, newPath);
                         tile.SetPath(newPath);
-                        await SaveRecentFilesAsync();
+                        tile.LastModified = System.IO.File.GetLastWriteTime(newPath);
+                        RecentFilesService.Remove(oldPath);
+                        RecentFilesService.AddOrPromote(newPath, tile.PageCount, System.IO.File.GetLastWriteTimeUtc(newPath));
                     }
                     catch (Exception ex)
                     {
-                        await ShowDialogAsync("Error", $"Failed to rename: {ex.Message}");
+                        await ShowDialogAsync(LocalizationService.Get("Common.Error"), LocalizationService.Format("Home.RenameFailed", ex.Message));
                     }
                 }
             }
@@ -493,8 +396,8 @@ namespace WindowsNotesApp.Pages
         {
             var picker = new OpenFileDialog
             {
-                Filter = "PDF Files (*.pdf)|*.pdf",
-                Title = "Open PDF File"
+                Filter = LocalizationService.Get("Home.PdfFilter"),
+                Title = LocalizationService.Get("Home.OpenPdfTitle")
             };
 
             if (picker.ShowDialog() == true)
@@ -531,7 +434,8 @@ namespace WindowsNotesApp.Pages
 
             var insertIndex = Math.Min(1, HomeTiles.Count);
             HomeTiles.Insert(insertIndex, HomeTile.CreateFileTile(path));
-            await SaveRecentFilesAsync();
+            RecentFilesService.AddOrPromote(path);
+            await Task.CompletedTask;
         }
 
         private async Task OpenRecentTileAsync(HomeTile tile)
@@ -544,7 +448,7 @@ namespace WindowsNotesApp.Pages
             if (!string.Equals(System.IO.Path.GetExtension(tile.Path), ".pdf", StringComparison.OrdinalIgnoreCase))
             {
                 await RemoveMissingRecentTileAsync(tile);
-                await ShowDialogAsync("Error", "Unsupported file type.");
+                await ShowDialogAsync(LocalizationService.Get("Common.Error"), LocalizationService.Get("Home.ErrorUnsupportedType"));
                 return;
             }
 
@@ -553,7 +457,7 @@ namespace WindowsNotesApp.Pages
                 if (!System.IO.File.Exists(tile.Path))
                 {
                     await RemoveMissingRecentTileAsync(tile);
-                    await ShowDialogAsync("Error", "File not found.");
+                    await ShowDialogAsync(LocalizationService.Get("Common.Error"), LocalizationService.Get("Home.ErrorFileNotFound"));
                     return;
                 }
                 if (Window.GetWindow(this) is MainWindow mw)
@@ -564,7 +468,7 @@ namespace WindowsNotesApp.Pages
             catch (Exception)
             {
                 await RemoveMissingRecentTileAsync(tile);
-                await ShowDialogAsync("Error", "File not found or access denied.");
+                await ShowDialogAsync(LocalizationService.Get("Common.Error"), LocalizationService.Get("Home.ErrorAccessDenied"));
             }
         }
 
@@ -576,7 +480,8 @@ namespace WindowsNotesApp.Pages
                 if (!item.IsAddTile && string.Equals(item.Path, tile.Path, StringComparison.OrdinalIgnoreCase))
                 {
                     HomeTiles.RemoveAt(i);
-                    await SaveRecentFilesAsync();
+                    RecentFilesService.Remove(tile.Path);
+                    await Task.CompletedTask;
                     return;
                 }
             }
@@ -588,7 +493,7 @@ namespace WindowsNotesApp.Pages
             await Task.CompletedTask;
         }
 
-        // ─── Smooth Scrolling ────────────────────────────
+        // 鈹€鈹€鈹€ Smooth Scrolling 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
         private double _targetVerticalOffset;
         private bool _smoothScrollInitialized;
         private double _scrollAnimationTarget;
@@ -646,11 +551,23 @@ namespace WindowsNotesApp.Pages
 
         public string Path { get; private set; }
 
+        private bool _isSelected;
+        public bool IsSelected
+        {
+            get => _isSelected;
+            set
+            {
+                _isSelected = value;
+                OnPropertyChanged(nameof(IsSelected));
+            }
+        }
+
         public void SetPath(string newPath)
         {
             Path = newPath;
             OnPropertyChanged(nameof(Path));
             OnPropertyChanged(nameof(FileName));
+            OnPropertyChanged(nameof(InfoText));
         }
 
         private int _pageCount;
@@ -686,10 +603,15 @@ namespace WindowsNotesApp.Pages
             {
                 if (IsAddTile || string.IsNullOrWhiteSpace(Path)) return string.Empty;
                 var parts = new List<string>();
-                if (PageCount > 0) parts.Add($"{PageCount} 页面");
-                if (LastModified != default) parts.Add(LastModified.ToString("yyyy/M/d"));
+                if (PageCount > 0) parts.Add(LocalizationService.Format("Home.Info.Pages", PageCount));
+                if (LastModified != default) parts.Add(LastModified.ToString("d", LocalizationService.CurrentCulture));
                 return string.Join(" · ", parts);
             }
+        }
+
+        public void RefreshDisplay()
+        {
+            OnPropertyChanged(nameof(InfoText));
         }
 
         public event PropertyChangedEventHandler PropertyChanged;
@@ -700,31 +622,44 @@ namespace WindowsNotesApp.Pages
             return new HomeTile { IsAddTile = true, Path = string.Empty };
         }
 
-        public static HomeTile CreateFileTile(string path)
+        public static HomeTile CreateFileTile(string path, int pageCount = 0, DateTime? lastModified = null)
         {
-            var tile = new HomeTile { IsAddTile = false, Path = path ?? string.Empty };
-            try
+            return new HomeTile
             {
-                if (System.IO.File.Exists(path))
-                {
-                    var fi = new System.IO.FileInfo(path);
-                    tile._lastModified = fi.LastWriteTime;
-                }
-            }
-            catch { }
-            return tile;
+                IsAddTile = false,
+                Path = path ?? string.Empty,
+                _pageCount = pageCount,
+                _lastModified = lastModified?.ToLocalTime() ?? default
+            };
         }
 
-        public void LoadPageCountAsync()
+        public static HomeTile CreateFileTile(RecentFileEntry entry)
         {
-            if (IsAddTile || string.IsNullOrWhiteSpace(Path)) return;
-            try
-            {
-                if (!System.IO.File.Exists(Path)) return;
-                using var doc = PdfiumViewer.PdfDocument.Load(Path);
-                PageCount = doc.PageCount;
-            }
-            catch { }
+            if (entry == null)
+                return CreateFileTile(string.Empty);
+
+            return CreateFileTile(entry.Path, entry.PageCount, entry.LastModifiedUtc);
         }
     }
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

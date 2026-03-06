@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -30,6 +30,7 @@ namespace WindowsNotesApp
             SourceInitialized += MainWindow_SourceInitialized;
             StateChanged += MainWindow_StateChanged;
             KeyDown += MainWindow_KeyDown;
+            ApplyLocalization();
 
             // Create the first Home tab
             AddNewHomeTab(activate: true);
@@ -43,17 +44,17 @@ namespace WindowsNotesApp
                 if (!File.Exists(iconPath)) return;
                 using var fs = new FileStream(iconPath, FileMode.Open, FileAccess.Read);
                 var decoder = new IconBitmapDecoder(fs, BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad);
-                // Pick the largest frame — preserves 32-bit ARGB transparency
+                // Pick the largest frame 鈥?preserves 32-bit ARGB transparency
                 var best = decoder.Frames.OrderByDescending(f => f.PixelWidth).First();
                 Icon = best;
             }
             catch
             {
-                // Fall back silently — window will use default icon
+                // Fall back silently 鈥?window will use default icon
             }
         }
 
-        // ─── Drag & Drop ────────────────────────────────
+        // 鈹€鈹€鈹€ Drag & Drop 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
         private static readonly string[] SupportedDropExtensions = { ".pdf" };
 
@@ -109,14 +110,19 @@ namespace WindowsNotesApp
             e.Handled = true;
         }
 
-        // ─── Tab Management ─────────────────────────────
+        // 鈹€鈹€鈹€ Tab Management 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
         private Frame ActiveFrame => _activeTab?.Frame;
 
         public void AddNewHomeTab(bool activate = true)
         {
-            var tab = new AppTab { Title = "Home", Icon = "\uE80F" };
-            var frame = new Frame { NavigationUIVisibility = NavigationUIVisibility.Hidden, AllowDrop = true };
+            var tab = new AppTab { Title = GetHomeTabTitle(), Icon = "\uE80F" };
+            var frame = new Frame
+            {
+                NavigationUIVisibility = NavigationUIVisibility.Hidden,
+                AllowDrop = true,
+                Background = Brushes.Transparent
+            };
             frame.Navigated += Frame_Navigated;
             tab.Frame = frame;
             TabContentArea.Children.Add(frame);
@@ -132,7 +138,6 @@ namespace WindowsNotesApp
         public void OpenFileInNewTab(string filePath)
         {
             RecentFilesService.AddOrPromote(filePath);
-            UpdateRecentFilesTxt(filePath);
 
             // Check if this file is already open
             var existing = _tabs.FirstOrDefault(t =>
@@ -149,7 +154,12 @@ namespace WindowsNotesApp
             string icon = ext == ".pdf" ? "\uEA90" : "\uE7C3"; // PDF icon or generic document
 
             var tab = new AppTab { Title = name, Icon = icon, FilePath = filePath };
-            var frame = new Frame { NavigationUIVisibility = NavigationUIVisibility.Hidden, AllowDrop = true };
+            var frame = new Frame
+            {
+                NavigationUIVisibility = NavigationUIVisibility.Hidden,
+                AllowDrop = true,
+                Background = Brushes.Transparent
+            };
             frame.Navigated += Frame_Navigated;
             tab.Frame = frame;
             TabContentArea.Children.Add(frame);
@@ -185,7 +195,7 @@ namespace WindowsNotesApp
             if (tab.Frame?.Content is EditorPage editor)
             {
                 var saved = await editor.AutoSaveAsync();
-                if (saved) ShowToast("File auto saved");
+                if (saved) ShowToast(LocalizationService.Get("Main.FileAutoSaved"));
             }
 
             tab.Frame.Navigated -= Frame_Navigated;
@@ -233,7 +243,7 @@ namespace WindowsNotesApp
 
             var title = new TextBlock
             {
-                Text = tab.Title.Length > 20 ? tab.Title.Substring(0, 17) + "…" : tab.Title,
+                Text = tab.Title.Length > 20 ? tab.Title.Substring(0, 17) + "..." : tab.Title,
                 FontSize = 12,
                 Foreground = new SolidColorBrush(isActive ? Color.FromRgb(30, 30, 30) : Color.FromRgb(100, 100, 100)),
                 VerticalAlignment = VerticalAlignment.Center,
@@ -258,7 +268,7 @@ namespace WindowsNotesApp
                 Margin = new Thickness(6, 0, 0, 0),
                 VerticalAlignment = VerticalAlignment.Center,
                 Visibility = _tabs.Count > 1 ? Visibility.Visible : Visibility.Collapsed,
-                ToolTip = "Close Tab"
+                ToolTip = LocalizationService.Get("Main.CloseTabTooltip")
             };
 
             // Close button template with hover
@@ -274,7 +284,7 @@ namespace WindowsNotesApp
             closeBtnTemplate.VisualTree = closeBorder;
 
             var hoverTrigger = new Trigger { Property = UIElement.IsMouseOverProperty, Value = true };
-            hoverTrigger.Setters.Add(new Setter(Border.BackgroundProperty, new SolidColorBrush(Color.FromArgb(30, 0, 0, 0)), "CloseBg"));
+            hoverTrigger.Setters.Add(new Setter(Border.BackgroundProperty, new SolidColorBrush(Color.FromArgb(48, 255, 255, 255)), "CloseBg"));
             closeBtnTemplate.Triggers.Add(hoverTrigger);
 
             closeBtn.Template = closeBtnTemplate;
@@ -294,13 +304,13 @@ namespace WindowsNotesApp
             var border = new Border
             {
                 Child = panel,
-                Background = new SolidColorBrush(isActive ? Color.FromArgb(255, 243, 243, 243) : Colors.Transparent),
+                Background = new SolidColorBrush(isActive ? Color.FromArgb(86, 255, 255, 255) : Color.FromArgb(20, 255, 255, 255)),
                 CornerRadius = new CornerRadius(8, 8, 0, 0),
                 Margin = new Thickness(1, 4, 1, 0),
                 Padding = new Thickness(2, 4, 2, 4),
                 Cursor = Cursors.Hand,
-                BorderThickness = isActive ? new Thickness(1, 1, 1, 0) : new Thickness(0),
-                BorderBrush = isActive ? new SolidColorBrush(Color.FromRgb(210, 210, 210)) : null
+                BorderThickness = new Thickness(1, 1, 1, 0),
+                BorderBrush = new SolidColorBrush(isActive ? Color.FromArgb(110, 255, 255, 255) : Color.FromArgb(40, 255, 255, 255))
             };
 
             border.MouseLeftButtonDown += (s, e) => ActivateTab(capturedTab);
@@ -318,7 +328,7 @@ namespace WindowsNotesApp
             return border;
         }
 
-        // ─── Navigation (operates on active tab's frame) ──
+        // 鈹€鈹€鈹€ Navigation (operates on active tab's frame) 鈹€鈹€
 
         private void Frame_Navigated(object sender, NavigationEventArgs e)
         {
@@ -341,7 +351,7 @@ namespace WindowsNotesApp
             if (ActiveFrame?.Content is EditorPage editor)
             {
                 var saved = await editor.AutoSaveAsync();
-                if (saved) ShowToast("File auto saved");
+                if (saved) ShowToast(LocalizationService.Get("Main.FileAutoSaved"));
             }
             if (ActiveFrame?.CanGoBack == true)
             {
@@ -363,7 +373,7 @@ namespace WindowsNotesApp
             if (ActiveFrame.Content is EditorPage editor)
             {
                 var saved = await editor.AutoSaveAsync();
-                if (saved) ShowToast("File auto saved");
+                if (saved) ShowToast(LocalizationService.Get("Main.FileAutoSaved"));
             }
             ActiveFrame.Navigate(new HomePage());
         }
@@ -378,7 +388,7 @@ namespace WindowsNotesApp
             if (_activeTab == null) return;
             if (ActiveFrame?.Content is HomePage)
             {
-                _activeTab.Title = "Home";
+                _activeTab.Title = GetHomeTabTitle();
                 _activeTab.Icon = "\uE80F";
                 _activeTab.FilePath = null;
             }
@@ -397,7 +407,6 @@ namespace WindowsNotesApp
             if (_activeTab == null) return;
 
             RecentFilesService.AddOrPromote(filePath);
-            UpdateRecentFilesTxt(filePath);
 
             // Check if already open in another tab
             var existing = _tabs.FirstOrDefault(t =>
@@ -435,7 +444,7 @@ namespace WindowsNotesApp
             }
         }
 
-        // ─── Window State ───────────────────────────────
+        // 鈹€鈹€鈹€ Window State 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
         private void MainWindow_StateChanged(object sender, EventArgs e)
         {
             MaximizeIcon.Text = WindowState == WindowState.Maximized ? "\uE923" : "\uE922";
@@ -499,39 +508,9 @@ namespace WindowsNotesApp
             DragDrop.AddPreviewDragEnterHandler(this, Window_DragEnter);
         }
 
-        /// <summary>
-        /// Writes the file path into the pipe-separated recent_files.txt that HomePage reads.
-        /// </summary>
-        private void UpdateRecentFilesTxt(string filePath)
-        {
-            try
-            {
-                var dir = Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                    "WindowsNotesApp");
-                Directory.CreateDirectory(dir);
-                var recentTxtPath = Path.Combine(dir, "recent_files.txt");
 
-                var existing = new List<string>();
-                if (File.Exists(recentTxtPath))
-                {
-                    var content = File.ReadAllText(recentTxtPath);
-                    existing = new List<string>(
-                        content.Split('|', StringSplitOptions.RemoveEmptyEntries));
-                }
 
-                // Remove duplicate (case-insensitive)
-                existing.RemoveAll(p =>
-                    string.Equals(p.Trim(), filePath, StringComparison.OrdinalIgnoreCase));
-                // Insert at front
-                existing.Insert(0, filePath);
-
-                File.WriteAllText(recentTxtPath, string.Join("|", existing));
-            }
-            catch { /* best-effort */ }
-        }
-
-        // ─── Header Toolbar Buttons ────────────────────
+        // 鈹€鈹€鈹€ Header Toolbar Buttons 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
         private void SearchBox_TextChanged(object sender, TextChangedEventArgs e)
         {
             if (ActiveFrame?.Content is HomePage home)
@@ -545,11 +524,14 @@ namespace WindowsNotesApp
             if (ActiveFrame?.Content is HomePage home)
             {
                 home.ToggleSelectionMode();
-                ShowToast(home.IsSelectionMode ? "Selection mode enabled" : "Selection mode disabled", "\uE762");
+                ShowToast(home.IsSelectionMode ? LocalizationService.Get("Main.SelectionEnabled") : LocalizationService.Get("Main.SelectionDisabled"), "\uE762");
+                return;
             }
-            else
+
+            if (ActiveFrame?.Content is EditorPage editor)
             {
-                ShowToast("Select mode coming soon", "\uE762");
+                editor.ToggleSelectionMode();
+                ShowToast(editor.IsSelectionMode ? LocalizationService.Get("Main.SelectionEnabled") : LocalizationService.Get("Main.SelectionDisabled"), "\uE762");
             }
         }
 
@@ -587,15 +569,15 @@ namespace WindowsNotesApp
 
         private void Settings_Click(object sender, RoutedEventArgs e)
         {
-            ShowToast("Settings coming soon", "\uE713");
+            OpenSettingsDialog();
         }
 
         private void About_Click(object sender, RoutedEventArgs e)
         {
-            MessageBox.Show("Caelum\nThe Modern Digital Ink Notetaker for Windows", "About", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBox.Show(LocalizationService.Get("Main.AboutMessage"), LocalizationService.Get("Main.AboutTitle"), MessageBoxButton.OK, MessageBoxImage.Information);
         }
 
-        // ─── Toast ─────────────────────────────────────
+        // 鈹€鈹€鈹€ Toast 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
         public async void ShowToast(string message, string icon = "\uE73E", int durationMs = 2500)
         {
             ToastIcon.Text = icon;
@@ -629,7 +611,7 @@ namespace WindowsNotesApp
         [DllImport("user32.dll")]
         private static extern bool ChangeWindowMessageFilterEx(IntPtr hwnd, uint message, uint action, IntPtr pChangeFilterStruct);
 
-        // ─── Acrylic Blur (Glassmorphism) ──────────────
+        // 鈹€鈹€鈹€ Acrylic Blur (Glassmorphism) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
         [DllImport("user32.dll")]
         private static extern int SetWindowCompositionAttribute(IntPtr hwnd, ref WindowCompositionAttributeData data);
 
@@ -678,3 +660,13 @@ namespace WindowsNotesApp
         }
     }
 }
+
+
+
+
+
+
+
+
+
+

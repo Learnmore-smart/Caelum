@@ -1,15 +1,30 @@
+﻿using WindowsNotesApp.Models;
+using WindowsNotesApp.Services;
+
 namespace WindowsNotesApp.Tests;
 
-public class Tests
+public class LocalizationServiceTests
 {
-    [SetUp]
-    public void Setup()
+    [TearDown]
+    public void TearDown()
     {
+        LocalizationService.ApplyLanguage(AppLanguage.English);
     }
 
     [Test]
-    public void Test1()
+    public void ApplyLanguage_UpdatesFrenchStrings()
     {
-        Assert.Pass();
+        LocalizationService.ApplyLanguage(AppLanguage.French);
+
+        Assert.That(LocalizationService.Get("Main.Settings"), Is.EqualTo("Paramètres"));
+        Assert.That(LocalizationService.CurrentCulture.Name, Is.EqualTo("fr-FR"));
+    }
+
+    [Test]
+    public void Format_UsesChinesePageLabel()
+    {
+        LocalizationService.ApplyLanguage(AppLanguage.Chinese);
+
+        Assert.That(LocalizationService.Format("Home.Info.Pages", 3), Is.EqualTo("3 页"));
     }
 }

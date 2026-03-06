@@ -1,7 +1,8 @@
-using System;
+﻿using System;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Windows;
+using WindowsNotesApp.Services;
 
 namespace WindowsNotesApp
 {
@@ -14,9 +15,7 @@ namespace WindowsNotesApp
         {
             base.OnStartup(e);
 
-            // Ensure pdfium.dll can be found in published / installed scenarios.
-            // PdfiumViewer.Native places it under x64/ – we need to add that
-            // folder to the DLL search path so LoadLibrary finds it.
+            LocalizationService.ApplyLanguage(AppSettingsService.Load().Language);
             EnsurePdfiumDllPath();
 
             var mainWindow = new MainWindow();
@@ -25,7 +24,6 @@ namespace WindowsNotesApp
 
         private static void EnsurePdfiumDllPath()
         {
-            // Candidate directories to search for pdfium.dll
             string baseDir = AppContext.BaseDirectory;
             string[] candidates = new[]
             {
@@ -33,7 +31,6 @@ namespace WindowsNotesApp
                 Path.Combine(baseDir, "x86"),
                 baseDir,
                 Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "x64"),
-                // For single-file publish, native libs extract next to the exe
                 Path.GetDirectoryName(Environment.ProcessPath) ?? baseDir,
                 Path.Combine(Path.GetDirectoryName(Environment.ProcessPath) ?? baseDir, "x64"),
             };
@@ -44,7 +41,7 @@ namespace WindowsNotesApp
                 if (File.Exists(dllPath))
                 {
                     SetDllDirectory(dir);
-                    System.Diagnostics.Debug.WriteLine($"[App] SetDllDirectory → {dir}");
+                    System.Diagnostics.Debug.WriteLine($"[App] SetDllDirectory -> {dir}");
                     return;
                 }
             }
