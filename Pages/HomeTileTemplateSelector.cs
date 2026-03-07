@@ -1,7 +1,7 @@
 using System.Windows;
 using System.Windows.Controls;
 
-namespace WindowsNotesApp.Pages
+namespace Caelum.Pages
 {
     public sealed class HomeTileTemplateSelector : DataTemplateSelector
     {

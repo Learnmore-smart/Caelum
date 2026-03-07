@@ -1,5 +1,5 @@
-﻿<UserControl
-    x:Class="WindowsNotesApp.Controls.PdfPageControl"
+<UserControl
+    x:Class="Caelum.Controls.PdfPageControl"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
@@ -20,13 +20,21 @@
         <!-- Text/Widget Layer -->
         <Canvas x:Name="TextOverlayCanvas" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" Background="Transparent"/>
 
+        <!-- PDF Text Selection Layer -->
+        <Canvas x:Name="PdfTextSelectionCanvas" HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
+                Background="Transparent" Visibility="Collapsed" IsHitTestVisible="False"/>
+
+        <!-- Selection Transform Layer (for select/move/scale) -->
+        <Canvas x:Name="SelectionOverlayCanvas" HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
+                Background="Transparent" Visibility="Collapsed" IsHitTestVisible="True"/>
+
         <!-- Eraser Indicator (on its own Canvas so SetLeft/SetTop works) -->
         <Canvas x:Name="EraserCanvas" IsHitTestVisible="False">
             <Ellipse x:Name="EraserIndicator"
                      Width="20"
                      Height="20"
                      Stroke="#0078D4"
-                     StrokeThickness="2"
+                     StrokeThickness="1"
                      Fill="#100078D4"
                      Visibility="Collapsed"
                      IsHitTestVisible="False"/>

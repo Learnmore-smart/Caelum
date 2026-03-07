@@ -2,7 +2,7 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.5.2.0
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WindowsNotesApp", "WindowsNotesApp.csproj", "{ABB7F2D8-344C-46EF-1A84-A20A5B2A0645}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Caelum", "Caelum.csproj", "{ABB7F2D8-344C-46EF-1A84-A20A5B2A0645}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WindowsNotesApp.Tests", "WindowsNotesApp.Tests\WindowsNotesApp.Tests.csproj", "{734EAC65-C6B0-C360-1E89-28EFAF5428F5}"
 EndProject

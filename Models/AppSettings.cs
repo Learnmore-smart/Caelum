@@ -1,4 +1,4 @@
-﻿namespace WindowsNotesApp.Models
+namespace Caelum.Models
 {
     public sealed class AppSettings
     {
@@ -16,5 +16,10 @@
         public AppLanguage Language { get; }
 
         public string DisplayName { get; }
+
+        public override string ToString()
+        {
+            return DisplayName;
+        }
     }
 }

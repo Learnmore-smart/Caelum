@@ -1,10 +1,10 @@
-﻿using System;
+using System;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Windows;
-using WindowsNotesApp.Services;
+using Caelum.Services;
 
-namespace WindowsNotesApp
+namespace Caelum
 {
     public partial class App : Application
     {

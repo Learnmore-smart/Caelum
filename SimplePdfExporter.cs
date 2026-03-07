@@ -6,7 +6,7 @@ using System.IO;
 using System.Text;
 using System.Windows.Shapes;
 
-namespace WindowsNotesApp
+namespace Caelum
 {
     public class SimplePdfExporter
     {

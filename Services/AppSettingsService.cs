@@ -1,9 +1,9 @@
-﻿using System;
+using System;
 using System.IO;
 using System.Text.Json;
-using WindowsNotesApp.Models;
+using Caelum.Models;
 
-namespace WindowsNotesApp.Services
+namespace Caelum.Services
 {
     public static class AppSettingsService
     {
@@ -20,7 +20,7 @@ namespace WindowsNotesApp.Services
         {
             var folder = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "WindowsNotesApp");
+                "Caelum");
             Directory.CreateDirectory(folder);
             SettingsPath = Path.Combine(folder, "settings.json");
         }

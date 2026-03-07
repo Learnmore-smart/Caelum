@@ -66,11 +66,11 @@ Push-Location $buildDir
 try {
     if ($Clean) {
         Write-Host "Cleaning..." -ForegroundColor Cyan
-        dotnet clean .\WindowsNotesApp.csproj -c $Configuration 2>&1 | Out-Null
+        dotnet clean .\Caelum.csproj -c $Configuration 2>&1 | Out-Null
     }
 
     Write-Host "Building ($Configuration)..." -ForegroundColor Cyan
-    dotnet build .\WindowsNotesApp.csproj -c $Configuration
+    dotnet build .\Caelum.csproj -c $Configuration
 
     if ($LASTEXITCODE -ne 0) {
         Write-Host "Build FAILED" -ForegroundColor Red

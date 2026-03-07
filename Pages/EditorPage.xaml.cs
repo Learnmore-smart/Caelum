@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -13,33 +13,28 @@ using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Shapes;
-using Forms = System.Windows.Forms;
-using PdfiumPdfDocument = PdfiumViewer.PdfDocument;
-using PdfiumWinFormsViewer = PdfiumViewer.PdfViewer;
-using WindowsNotesApp.Controls;
-using WindowsNotesApp.Models;
-using WindowsNotesApp.Services;
+using Caelum.Controls;
+using Caelum.Models;
+using Caelum.Services;
 
-namespace WindowsNotesApp.Pages
+namespace Caelum.Pages
 {
     public sealed partial class EditorPage : Page
     {
-        private enum ToolType { None, Pen, Highlighter, Eraser, Text }
+        private enum ToolType { None, Pen, Highlighter, Eraser, Text, Select }
 
         private ToolType _currentTool = ToolType.None;
         private ToolType _previousTool = ToolType.Pen;
         private Color _penColor = Colors.Black;
         private Color _highlighterColor = Colors.Yellow;
         private Color _textColor = Colors.Black;
-        private double _penSize = 2.0;
-        private double _highlighterSize = 12.0;
+        private double _penSize = 1.5;
+        private double _highlighterSize = 8.0;
         private double _eraserSize = 20.0;
         private double _currentFontSize = 18.0;
         private bool _isUpdatingToolState;
 
         private readonly PdfService _pdfService;
-        private PdfiumWinFormsViewer _selectionPdfViewer;
-        private PdfiumPdfDocument _selectionPdfDocument;
         private CancellationTokenSource _loadCts;
         private int _loadSessionId;
         private bool _isDirty;
@@ -54,6 +49,22 @@ namespace WindowsNotesApp.Pages
         private Popup _penPopup;
         private Popup _highlighterPopup;
         private Popup _eraserPopup;
+        private Popup _selectionPopup;       // settings popup (opens on button click)
+        private Popup _selectionActionPopup; // action popup (opens when selection exists)
+        private Button _scaleUpButton;
+        private Button _scaleDownButton;
+        private PdfPageControl _activeSelectionPage;
+
+        private const double PdfTextSelectionDragThreshold = 4.0;
+        private PdfPageControl _pdfTextSelectionPage;
+        private PdfService.PdfPageTextInfo _pdfTextSelectionInfo;
+        private Point _pdfTextSelectionPressPoint;
+        private int _pdfTextSelectionAnchorOffset = -1;
+        private int _pdfTextSelectionActiveOffset = -1;
+        private bool _isPdfTextSelectionDragging;
+        private bool _pdfTextSelectionExceededThreshold;
+        private int _pdfTextSelectionRequestId;
+        private string _selectedPdfText;
 
         private bool _isDragging;
         private bool _dragArmed;
@@ -72,8 +83,50 @@ namespace WindowsNotesApp.Pages
             public void Undo() => _page.RemoveStrokeQuiet(_stroke);
             public void Redo() => _page.AddStrokeQuiet(_stroke);
         }
+        private class SelectionMoveAction : IUndoAction
+        {
+            private readonly PdfPageControl _page;
+            private readonly double _deltaX;
+            private readonly double _deltaY;
+            private readonly List<System.Windows.Ink.Stroke> _strokes;
+            private readonly List<System.Windows.Controls.Grid> _containers;
+            public SelectionMoveAction(PdfPageControl page, double deltaX, double deltaY,
+                List<System.Windows.Ink.Stroke> strokes, List<System.Windows.Controls.Grid> containers)
+            {
+                _page = page;
+                _deltaX = deltaX;
+                _deltaY = deltaY;
+                _strokes = strokes;
+                _containers = containers;
+            }
+            public void Undo() => _page.MoveItemsDirectly(_strokes, _containers, -_deltaX, -_deltaY);
+            public void Redo() => _page.MoveItemsDirectly(_strokes, _containers, _deltaX, _deltaY);
+        }
+        private class SelectionResizeAction : IUndoAction
+        {
+            private readonly PdfPageControl _page;
+            private readonly double _totalScale;
+            private readonly System.Windows.Point _anchor;
+            private readonly List<System.Windows.Ink.Stroke> _strokes;
+            private readonly List<System.Windows.Controls.Grid> _containers;
+            public SelectionResizeAction(PdfPageControl page, double totalScale, System.Windows.Point anchor,
+                List<System.Windows.Ink.Stroke> strokes, List<System.Windows.Controls.Grid> containers)
+            {
+                _page = page;
+                _totalScale = totalScale;
+                _anchor = anchor;
+                _strokes = strokes;
+                _containers = containers;
+            }
+            public void Undo() => _page.ScaleItemsDirectly(_strokes, _containers, 1.0 / _totalScale, _anchor);
+            public void Redo() => _page.ScaleItemsDirectly(_strokes, _containers, _totalScale, _anchor);
+        }
         private readonly List<IUndoAction> _undoStack = new List<IUndoAction>();
         private readonly List<IUndoAction> _redoStack = new List<IUndoAction>();
+
+        // Selection tool state
+        private SelectionFilter _selectionFilter = SelectionFilter.Both;
+        private SelectionShape _selectionShape = SelectionShape.Rectangle;
 
         private double _zoomLevel = 1.0;
         private double _lastRenderedDpiScale = 1.0;
@@ -100,6 +153,14 @@ namespace WindowsNotesApp.Pages
 
         // Touch manipulation state
         private double _manipulationBaseZoom;
+        private int _activeTouchCount;
+
+        // Raw pinch-zoom tracking (bypasses WPF manipulation system so the
+        // first finger can still reach InkCanvas while two fingers zoom)
+        private readonly Dictionary<int, Point> _activeTouches = new Dictionary<int, Point>();
+        private double _pinchStartDistance;
+        private double _pinchStartZoom;
+        private bool _isPinchActive;
 
         private const double ZoomMin = 0.25;
         private const double ZoomMax = 4.0;
@@ -120,13 +181,14 @@ namespace WindowsNotesApp.Pages
         // Horizontal mouse wheel hook for precision touchpads
         private HwndSource _hwndSource;
         private const int WM_MOUSEHWHEEL = 0x020E;
+        private const int WM_MOUSEWHEEL = 0x020A;
+        private const int MK_CONTROL = 0x0008;
 
         public EditorPage()
         {
             InitializeComponent();
             InitializeTextBoxPopup();
             CreateToolPopups();
-            InitializeSelectablePdfViewer();
             ApplyLocalization();
 
             _pdfService = new PdfService();
@@ -136,10 +198,10 @@ namespace WindowsNotesApp.Pages
             FixPopupTopmost(_penPopup);
             FixPopupTopmost(_highlighterPopup);
             FixPopupTopmost(_eraserPopup);
+            FixPopupTopmost(_selectionPopup);
+            FixPopupTopmost(_selectionActionPopup);
 
             KeyDown += EditorPage_KeyDown;
-            PreviewMouseDown += EditorPage_PreviewMouseDown;
-            PreviewStylusDown += EditorPage_PreviewStylusDown;
 
             Loaded += EditorPage_Loaded;
             Unloaded += EditorPage_Unloaded;
@@ -169,130 +231,254 @@ namespace WindowsNotesApp.Pages
             _penService?.Dispose();
             _penService = null;
             RemoveHorizontalWheelHook();
-            DisposeSelectablePdfDocument();
+            ClearPdfTextSelection();
         }
 
-        private bool IsSelectablePdfSurfaceAvailable => _selectionPdfViewer?.Document != null;
-
-        private bool IsSelectablePdfSurfaceActive => _currentTool == ToolType.None && IsSelectablePdfSurfaceAvailable;
-
-        private void InitializeSelectablePdfViewer()
+        private void ClearPdfTextSelection(bool clearCopiedText = true)
         {
-            _selectionPdfViewer = new PdfiumWinFormsViewer
-            {
-                Dock = Forms.DockStyle.Fill,
-                ShowToolbar = false,
-                ShowBookmarks = false,
-                BackColor = System.Drawing.Color.FromArgb(234, 234, 234)
-            };
-            _selectionPdfViewer.Renderer.ZoomChanged += SelectionRenderer_ZoomChanged;
-            SelectablePdfHost.Child = _selectionPdfViewer;
-            UpdatePdfSurfaceVisibility();
+            Interlocked.Increment(ref _pdfTextSelectionRequestId);
+
+            foreach (var page in _pageControls)
+                page.ClearPdfTextSelection();
+
+            _pdfTextSelectionPage = null;
+            _pdfTextSelectionInfo = null;
+            _pdfTextSelectionAnchorOffset = -1;
+            _pdfTextSelectionActiveOffset = -1;
+            _isPdfTextSelectionDragging = false;
+            _pdfTextSelectionExceededThreshold = false;
+
+            if (clearCopiedText)
+                _selectedPdfText = null;
         }
 
-        private void SelectionRenderer_ZoomChanged(object sender, EventArgs e)
+        private bool TryCopySelectedPdfTextToClipboard()
         {
-            if (!IsSelectablePdfSurfaceActive)
-                return;
-
-            var zoom = _selectionPdfViewer?.Renderer?.Zoom ?? 0;
-            if (zoom <= 0 || double.IsNaN(zoom) || double.IsInfinity(zoom))
-                return;
-
-            _zoomLevel = Math.Max(ZoomMin, Math.Min(ZoomMax, zoom));
-            UpdateZoomLabel();
-        }
-
-        private void DisposeSelectablePdfDocument()
-        {
-            if (_selectionPdfViewer != null)
-                _selectionPdfViewer.Document = null;
-
-            _selectionPdfDocument?.Dispose();
-            _selectionPdfDocument = null;
-        }
-
-        private async Task LoadSelectablePdfDocumentAsync(string filePath, CancellationToken token)
-        {
-            PdfiumPdfDocument document = null;
+            if ((_currentTool != ToolType.None && _currentTool != ToolType.Select) || string.IsNullOrEmpty(_selectedPdfText))
+                return false;
 
             try
             {
-                document = await Task.Run(() => PdfiumPdfDocument.Load(filePath), token);
-                token.ThrowIfCancellationRequested();
+                Clipboard.SetText(_selectedPdfText);
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
 
-                DisposeSelectablePdfDocument();
-                _selectionPdfDocument = document;
-                _selectionPdfViewer.Document = _selectionPdfDocument;
-                ApplySelectableViewerZoom(_zoomLevel);
+        private static bool RectContainsWithPadding(Rect rect, Point point, double padding)
+        {
+            var padded = rect;
+            padded.Inflate(padding, padding);
+            return padded.Contains(point);
+        }
+
+        private static double DistanceToRect(Point point, Rect rect)
+        {
+            double dx = 0;
+            if (point.X < rect.Left)
+                dx = rect.Left - point.X;
+            else if (point.X > rect.Right)
+                dx = point.X - rect.Right;
+
+            double dy = 0;
+            if (point.Y < rect.Top)
+                dy = rect.Top - point.Y;
+            else if (point.Y > rect.Bottom)
+                dy = point.Y - rect.Bottom;
+
+            return Math.Sqrt((dx * dx) + (dy * dy));
+        }
+
+        private int FindNearestTextOffset(PdfService.PdfPageTextInfo textInfo, Point point, double maxDistance)
+        {
+            if (textInfo?.Characters == null || textInfo.Characters.Count == 0)
+                return -1;
+
+            int bestOffset = -1;
+            double bestDistance = double.MaxValue;
+
+            foreach (var character in textInfo.Characters)
+            {
+                if (character.Bounds == null || character.Bounds.Count == 0 || character.UnionBounds.IsEmpty)
+                    continue;
+
+                if (RectContainsWithPadding(character.UnionBounds, point, 3.0))
+                    return character.Offset;
+
+                double distance = DistanceToRect(point, character.UnionBounds);
+                if (distance < bestDistance)
+                {
+                    bestDistance = distance;
+                    bestOffset = character.Offset;
+                }
+            }
+
+            return bestDistance <= maxDistance ? bestOffset : -1;
+        }
+
+        private static bool ShouldMergeSelectionRects(Rect current, Rect next)
+        {
+            double verticalOverlap = Math.Min(current.Bottom, next.Bottom) - Math.Max(current.Top, next.Top);
+            bool sameLine = verticalOverlap >= Math.Min(current.Height, next.Height) * 0.35;
+            bool closeEnough = next.Left <= current.Right + 8;
+            return sameLine && closeEnough;
+        }
+
+        private static IReadOnlyList<Rect> BuildPdfTextSelectionRects(PdfService.PdfPageTextInfo textInfo, int startOffset, int endOffset)
+        {
+            var mergedRects = new List<Rect>();
+            if (textInfo?.Characters == null || textInfo.Characters.Count == 0)
+                return mergedRects;
+
+            int start = Math.Max(0, Math.Min(startOffset, endOffset));
+            int end = Math.Min(textInfo.Characters.Count - 1, Math.Max(startOffset, endOffset));
+
+            for (int i = start; i <= end; i++)
+            {
+                var character = textInfo.Characters[i];
+                if (character.Bounds == null || character.Bounds.Count == 0)
+                    continue;
+
+                foreach (var rect in character.Bounds)
+                {
+                    if (rect.IsEmpty || rect.Width <= 0 || rect.Height <= 0)
+                        continue;
+
+                    if (mergedRects.Count > 0 && ShouldMergeSelectionRects(mergedRects[mergedRects.Count - 1], rect))
+                    {
+                        var merged = mergedRects[mergedRects.Count - 1];
+                        merged.Union(rect);
+                        mergedRects[mergedRects.Count - 1] = merged;
+                    }
+                    else
+                    {
+                        mergedRects.Add(rect);
+                    }
+                }
+            }
+
+            return mergedRects;
+        }
+
+        private void UpdatePdfTextSelectionVisuals()
+        {
+            if (_pdfTextSelectionPage == null || _pdfTextSelectionInfo == null || _pdfTextSelectionInfo.Text == null)
+            {
+                ClearPdfTextSelection();
+                return;
+            }
+
+            int start = Math.Min(_pdfTextSelectionAnchorOffset, _pdfTextSelectionActiveOffset);
+            int end = Math.Max(_pdfTextSelectionAnchorOffset, _pdfTextSelectionActiveOffset);
+            if (start < 0 || end < start || end >= _pdfTextSelectionInfo.Text.Length)
+            {
+                ClearPdfTextSelection();
+                return;
+            }
+
+            foreach (var pageControl in _pageControls)
+            {
+                if (!ReferenceEquals(pageControl, _pdfTextSelectionPage))
+                    pageControl.ClearPdfTextSelection();
+            }
+
+            _pdfTextSelectionPage.SetPdfTextSelectionRects(BuildPdfTextSelectionRects(_pdfTextSelectionInfo, start, end));
+            _selectedPdfText = _pdfTextSelectionInfo.Text.Substring(start, end - start + 1);
+        }
+
+        private async void PageControl_PdfTextSelectionPointerPressed(object sender, PdfTextSelectionPointerEventArgs e)
+        {
+            if (_currentTool != ToolType.None || sender is not PdfPageControl page)
+                return;
+
+            if (_selectedTextBox != null)
+                DeselectTextBox();
+
+            Keyboard.Focus(PdfScrollViewer);
+            ClearPdfTextSelection();
+            _pdfTextSelectionPressPoint = e.Position;
+
+            int requestId = Interlocked.Increment(ref _pdfTextSelectionRequestId);
+
+            try
+            {
+                var textInfo = _pdfService.TryGetCachedPageTextInfo(page.PageIndex, out var cachedTextInfo)
+                    ? cachedTextInfo
+                    : await _pdfService.GetPageTextInfoAsync(page.PageIndex);
+
+                if (requestId != _pdfTextSelectionRequestId || _currentTool != ToolType.None)
+                    return;
+
+                int anchorOffset = FindNearestTextOffset(textInfo, e.Position, 24.0);
+                if (anchorOffset < 0)
+                    return;
+
+                _pdfTextSelectionPage = page;
+                _pdfTextSelectionInfo = textInfo;
+                _pdfTextSelectionAnchorOffset = anchorOffset;
+                _pdfTextSelectionActiveOffset = anchorOffset;
+                _isPdfTextSelectionDragging = true;
             }
             catch (OperationCanceledException)
             {
-                document?.Dispose();
-                throw;
-            }
-            catch (Exception ex)
-            {
-                document?.Dispose();
-                System.Diagnostics.Debug.WriteLine($"LoadSelectablePdfDocumentAsync failed: {ex.Message}");
-            }
-            finally
-            {
-                UpdatePdfSurfaceVisibility();
             }
         }
 
-        private void UpdatePdfSurfaceVisibility()
+        private void PageControl_PdfTextSelectionPointerMoved(object sender, PdfTextSelectionPointerEventArgs e)
         {
-            bool showSelectableSurface = IsSelectablePdfSurfaceActive && LoadingOverlay.Visibility != Visibility.Visible;
-            SelectablePdfContainer.Visibility = showSelectableSurface ? Visibility.Visible : Visibility.Collapsed;
-            PdfScrollViewer.Visibility = showSelectableSurface ? Visibility.Collapsed : Visibility.Visible;
-        }
-
-        private void SyncSelectableViewerFromCustomView()
-        {
-            if (!IsSelectablePdfSurfaceAvailable)
+            if (!_isPdfTextSelectionDragging || _pdfTextSelectionInfo == null || !ReferenceEquals(sender, _pdfTextSelectionPage))
                 return;
 
-            ApplySelectableViewerZoom(_zoomLevel);
-
-            var anchor = CaptureScrollAnchor();
-            if (anchor.AnchorPage != null)
-                _selectionPdfViewer.Renderer.Page = anchor.AnchorPage.PageIndex;
-        }
-
-        private void SyncCustomSurfaceFromSelectableViewer()
-        {
-            if (!IsSelectablePdfSurfaceAvailable)
+            if (e.LeftButton != MouseButtonState.Pressed)
                 return;
 
-            var zoom = _selectionPdfViewer.Renderer.Zoom;
-            if (zoom > 0 && !double.IsNaN(zoom) && !double.IsInfinity(zoom))
-                _zoomLevel = Math.Max(ZoomMin, Math.Min(ZoomMax, zoom));
+            int offset = FindNearestTextOffset(_pdfTextSelectionInfo, e.Position, double.PositiveInfinity);
+            if (offset < 0)
+                return;
 
-            ApplyCustomZoom(_zoomLevel);
-
-            int pageIndex = _selectionPdfViewer.Renderer.Page;
-            if (pageIndex >= 0 && pageIndex < _pageControls.Count)
+            _pdfTextSelectionActiveOffset = offset;
+            if (!_pdfTextSelectionExceededThreshold)
             {
-                PdfScrollViewer.ScrollToVerticalOffset(Math.Max(0, GetScaledPageTop(pageIndex)));
-                _targetVerticalOffset = PdfScrollViewer.VerticalOffset;
-                _targetHorizontalOffset = PdfScrollViewer.HorizontalOffset;
-                _smoothScrollInitialized = true;
+                var delta = e.Position - _pdfTextSelectionPressPoint;
+                _pdfTextSelectionExceededThreshold = Math.Abs(delta.X) >= PdfTextSelectionDragThreshold || Math.Abs(delta.Y) >= PdfTextSelectionDragThreshold;
             }
+
+            if (_pdfTextSelectionExceededThreshold)
+                UpdatePdfTextSelectionVisuals();
         }
 
-        private void ApplySelectableViewerZoom(double level, Point? focusPoint = null)
+        private void PageControl_PdfTextSelectionPointerReleased(object sender, PdfTextSelectionPointerEventArgs e)
         {
-            if (!IsSelectablePdfSurfaceAvailable)
+            Interlocked.Increment(ref _pdfTextSelectionRequestId);
+
+            if (!_isPdfTextSelectionDragging || _pdfTextSelectionInfo == null || !ReferenceEquals(sender, _pdfTextSelectionPage))
+            {
+                ClearPdfTextSelection();
                 return;
+            }
 
-            _zoomLevel = Math.Max(ZoomMin, Math.Min(ZoomMax, level));
-            _selectionPdfViewer.Renderer.Zoom = _zoomLevel;
-            UpdateZoomLabel();
+            int offset = FindNearestTextOffset(_pdfTextSelectionInfo, e.Position, double.PositiveInfinity);
+            if (offset >= 0)
+                _pdfTextSelectionActiveOffset = offset;
+
+            bool keepSelection = _pdfTextSelectionExceededThreshold
+                && _pdfTextSelectionAnchorOffset >= 0
+                && _pdfTextSelectionActiveOffset >= 0;
+
+            _isPdfTextSelectionDragging = false;
+            _pdfTextSelectionExceededThreshold = false;
+
+            if (!keepSelection)
+            {
+                ClearPdfTextSelection();
+                return;
+            }
+
+            UpdatePdfTextSelectionVisuals();
         }
-
-        // 閳光偓閳光偓閳光偓 WM_MOUSEHWHEEL hook for precision touchpad horizontal scrolling 閳光偓閳光偓閳光偓
         private void InstallHorizontalWheelHook()
         {
             var window = Window.GetWindow(this);
@@ -309,7 +495,30 @@ namespace WindowsNotesApp.Pages
 
         private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
         {
-            if (msg == WM_MOUSEHWHEEL)
+            if (msg == WM_MOUSEWHEEL)
+            {
+                int keys = (int)(wParam.ToInt64() & 0xFFFF);
+                if ((keys & MK_CONTROL) != 0)
+                {
+                    // Precision touchpad pinch-to-zoom sends Ctrl+Wheel.
+                    // Handle it here so we don't rely on Keyboard.Modifiers
+                    // which can miss the synthetic Ctrl from touchpad drivers.
+                    int delta = (short)((wParam.ToInt64() >> 16) & 0xFFFF);
+                    var mousePos = Mouse.GetPosition(PdfScrollViewer);
+                    if (mousePos.X >= 0 && mousePos.Y >= 0 &&
+                        mousePos.X <= PdfScrollViewer.ActualWidth &&
+                        mousePos.Y <= PdfScrollViewer.ActualHeight)
+                    {
+                        double oldZoom = _zoomLevel;
+                        double step = delta > 0 ? ZoomStep : -ZoomStep;
+                        double newZoom = Math.Max(ZoomMin, Math.Min(ZoomMax, _zoomLevel + step));
+                        if (Math.Abs(newZoom - oldZoom) > 0.001)
+                            ZoomAroundPoint(newZoom, mousePos);
+                        handled = true;
+                    }
+                }
+            }
+            else if (msg == WM_MOUSEHWHEEL)
             {
                 // wParam high word = horizontal delta (positive = right, negative = left)
                 int delta = (short)((wParam.ToInt64() >> 16) & 0xFFFF);
@@ -357,7 +566,7 @@ namespace WindowsNotesApp.Pages
             }
 
             var window = Window.GetWindow(this);
-            Console.WriteLine($"[EditorPage] InitializePenService 閳?Window={window?.GetType().Name ?? "NULL"}");
+            Console.WriteLine($"[EditorPage] InitializePenService 闁?Window={window?.GetType().Name ?? "NULL"}");
 
             _penService = new WindowsPenService();
             _penService.ToolToggleRequested += PenService_ToolToggleRequested;
@@ -414,12 +623,12 @@ namespace WindowsNotesApp.Pages
         {
             if (_currentTool == ToolType.Eraser)
             {
-                Console.WriteLine($"[EditorPage] Eraser 閳?{_previousTool}");
+                Console.WriteLine($"[EditorPage] Eraser 闁?{_previousTool}");
                 ActivateTool(_previousTool);
             }
             else
             {
-                Console.WriteLine($"[EditorPage] {_currentTool} 閳?Eraser");
+                Console.WriteLine($"[EditorPage] {_currentTool} 闁?Eraser");
                 _previousTool = _currentTool;
                 ActivateTool(ToolType.Eraser);
             }
@@ -431,12 +640,26 @@ namespace WindowsNotesApp.Pages
             Loaded += async (s, e) => await LoadPdfAsync(filePath);
         }
 
-        private void EditorPage_KeyDown(object sender, KeyEventArgs e)
+        private async void EditorPage_KeyDown(object sender, KeyEventArgs e)
         {
             if (e.Key == Key.Escape)
             {
                 ActivateTool(ToolType.None);
                 e.Handled = true;
+            }
+            else if (Keyboard.Modifiers == ModifierKeys.Control && e.Key == Key.S)
+            {
+                await SaveAnnotationsToPdfAsync();
+                e.Handled = true;
+            }
+            else if (Keyboard.Modifiers == ModifierKeys.Control && e.Key == Key.C)
+            {
+                if (TryCopySelectedPdfTextToClipboard())
+                {
+                    var mw = Window.GetWindow(this) as MainWindow;
+                    mw?.ShowToast("Text copied", "\uE8C8", 1500);
+                    e.Handled = true;
+                }
             }
             else if (Keyboard.Modifiers == ModifierKeys.Control && e.Key == Key.Z)
             {
@@ -491,7 +714,7 @@ namespace WindowsNotesApp.Pages
                 _smoothScrollInitialized = true;
             }
 
-            // Shift+Wheel 閳?horizontal scroll
+            // Shift+Wheel 闁?horizontal scroll
             if (Keyboard.Modifiers == ModifierKeys.Shift)
             {
                 double scrollAmount = -e.Delta * 0.8;
@@ -502,7 +725,7 @@ namespace WindowsNotesApp.Pages
                 return;
             }
 
-            // Normal wheel 閳?vertical scroll
+            // Normal wheel 闁?vertical scroll
             double vScrollAmount = -e.Delta * 0.8;
             _targetVerticalOffset = Math.Max(0,
                 Math.Min(PdfScrollViewer.ScrollableHeight, _targetVerticalOffset + vScrollAmount));
@@ -510,7 +733,7 @@ namespace WindowsNotesApp.Pages
             AnimateScroll(_targetVerticalOffset);
         }
 
-        // 閳光偓閳光偓閳光偓 Zoom around a point (keeps that point stable on screen) 閳光偓閳光偓閳光偓
+        // 闁冲厜鍋撻柍鍏夊亾闁冲厜鍋?Zoom around a point (keeps that point stable on screen) 闁冲厜鍋撻柍鍏夊亾闁冲厜鍋?
         private void ZoomAroundPoint(double newZoom, Point viewportPoint)
         {
             if (IsSelectablePdfSurfaceActive)
@@ -537,16 +760,16 @@ namespace WindowsNotesApp.Pages
                 _targetVerticalOffset = PdfScrollViewer.VerticalOffset;
                 _targetHorizontalOffset = PdfScrollViewer.HorizontalOffset;
                 _smoothScrollInitialized = true;
-            }), System.Windows.Threading.DispatcherPriority.Background);
+            }), System.Windows.Threading.DispatcherPriority.Render);
         }
 
-        // 閳光偓閳光偓閳光偓 Touch Manipulation (pinch-to-zoom + pan) 閳光偓閳光偓閳光偓
+        // 闁冲厜鍋撻柍鍏夊亾闁冲厜鍋?Touch Manipulation (pinch-to-zoom + pan) 闁冲厜鍋撻柍鍏夊亾闁冲厜鍋?
         private void PdfScrollViewer_ManipulationStarting(object sender, ManipulationStartingEventArgs e)
         {
             // Only handle multi-finger gestures (pinch-to-zoom, two-finger pan).
             // Single-touch from M-Pencil (which some Huawei digitizers report as
             // a touch device rather than stylus) must pass through to the InkCanvas.
-            if (e.Manipulators.Count() < 2 && _currentTool != ToolType.None)
+            if (_activeTouchCount < 2 && _currentTool != ToolType.None)
             {
                 e.Cancel();
                 return;
@@ -560,24 +783,20 @@ namespace WindowsNotesApp.Pages
 
         private void PdfScrollViewer_ManipulationDelta(object sender, ManipulationDeltaEventArgs e)
         {
-            // Pan (translate)
+            // If our raw-touch pinch is active, skip manipulation-based handling
+            // to avoid conflicting pan during a 2-finger zoom gesture.
+            if (_isPinchActive)
+            {
+                e.Handled = true;
+                return;
+            }
+
+            // Pan (translate) for single-finger navigation (ToolType.None)
             double panX = e.DeltaManipulation.Translation.X;
             double panY = e.DeltaManipulation.Translation.Y;
 
             PdfScrollViewer.ScrollToHorizontalOffset(PdfScrollViewer.HorizontalOffset - panX);
             PdfScrollViewer.ScrollToVerticalOffset(PdfScrollViewer.VerticalOffset - panY);
-
-            // Pinch-to-zoom
-            double scaleX = e.DeltaManipulation.Scale.X;
-            double scaleY = e.DeltaManipulation.Scale.Y;
-            double pinchScale = (scaleX + scaleY) / 2.0;
-
-            if (Math.Abs(pinchScale - 1.0) > 0.001)
-            {
-                var origin = e.ManipulationOrigin;
-                double newZoom = Math.Max(ZoomMin, Math.Min(ZoomMax, _zoomLevel * pinchScale));
-                ZoomAroundPoint(newZoom, origin);
-            }
 
             // Sync smooth scroll state
             _targetVerticalOffset = PdfScrollViewer.VerticalOffset;
@@ -595,14 +814,67 @@ namespace WindowsNotesApp.Pages
             e.Handled = true;
         }
 
-        // 閳光偓閳光偓閳光偓 Smooth scroll animation (vertical) 閳光偓閳光偓閳光偓
+        private void PdfScrollViewer_PreviewTouchDown(object sender, TouchEventArgs e)
+        {
+            var pos = e.GetTouchPoint(PdfScrollViewer).Position;
+            _activeTouches[e.TouchDevice.Id] = pos;
+            _activeTouchCount++;
+
+            if (_activeTouches.Count == 2)
+            {
+                // Second finger landed: start pinch-zoom tracking.
+                // Consume this touch so InkCanvas / manipulation don't get it.
+                var pts = new List<Point>(_activeTouches.Values);
+                double dist = PinchDistance(pts[0], pts[1]);
+                if (dist > 10)
+                {
+                    _pinchStartDistance = dist;
+                    _pinchStartZoom = _zoomLevel;
+                    _isPinchActive = true;
+                    e.Handled = true;
+                }
+            }
+        }
+
+        private void PdfScrollViewer_PreviewTouchMove(object sender, TouchEventArgs e)
+        {
+            if (!_activeTouches.ContainsKey(e.TouchDevice.Id)) return;
+            _activeTouches[e.TouchDevice.Id] = e.GetTouchPoint(PdfScrollViewer).Position;
+
+            if (_isPinchActive && _activeTouches.Count >= 2)
+            {
+                var pts = new List<Point>(_activeTouches.Values);
+                double newDist = PinchDistance(pts[0], pts[1]);
+                if (_pinchStartDistance > 5 && newDist > 0)
+                {
+                    double newZoom = Math.Max(ZoomMin, Math.Min(ZoomMax,
+                        _pinchStartZoom * (newDist / _pinchStartDistance)));
+                    var center = new Point((pts[0].X + pts[1].X) / 2.0, (pts[0].Y + pts[1].Y) / 2.0);
+                    ZoomAroundPoint(newZoom, center);
+                }
+                e.Handled = true;
+            }
+        }
+
+        private void PdfScrollViewer_PreviewTouchUp(object sender, TouchEventArgs e)
+        {
+            _activeTouches.Remove(e.TouchDevice.Id);
+            if (_activeTouchCount > 0) _activeTouchCount--;
+            if (_activeTouches.Count < 2)
+                _isPinchActive = false;
+        }
+
+        private static double PinchDistance(Point a, Point b)
+            => Math.Sqrt((a.X - b.X) * (a.X - b.X) + (a.Y - b.Y) * (a.Y - b.Y));
+
+        // 闁冲厜鍋撻柍鍏夊亾闁冲厜鍋?Smooth scroll animation (vertical) 闁冲厜鍋撻柍鍏夊亾闁冲厜鍋?
         private double _scrollAnimationTarget;
         private double _scrollAnimationStart;
         private DateTime _scrollAnimationStartTime;
         private TimeSpan _scrollAnimationDuration;
         private bool _isScrollAnimating;
 
-        // 閳光偓閳光偓閳光偓 Smooth scroll animation (horizontal) 閳光偓閳光偓閳光偓
+        // 闁冲厜鍋撻柍鍏夊亾闁冲厜鍋?Smooth scroll animation (horizontal) 闁冲厜鍋撻柍鍏夊亾闁冲厜鍋?
         private double _hScrollAnimationTarget;
         private double _hScrollAnimationStart;
         private DateTime _hScrollAnimationStartTime;
@@ -673,7 +945,7 @@ namespace WindowsNotesApp.Pages
         {
             // Only handle pen (not finger touch) for stylus-drag scrolling.
             // Finger touch should go through to ManipulationDelta for pinch-to-zoom.
-            // Include both Stylus and Touch tablet types 閳?some Huawei MateBook
+            // Include both Stylus and Touch tablet types 闁?some Huawei MateBook
             // digitizers report the M-Pencil as Touch rather than Stylus.
             bool isPenDevice = e.StylusDevice?.TabletDevice?.Type == TabletDeviceType.Stylus;
 
@@ -727,7 +999,7 @@ namespace WindowsNotesApp.Pages
             }
         }
 
-        // 閳光偓閳光偓閳光偓 Middle mouse button panning 閳光偓閳光偓閳光偓
+        // 闁冲厜鍋撻柍鍏夊亾闁冲厜鍋?Middle mouse button panning 闁冲厜鍋撻柍鍏夊亾闁冲厜鍋?
         private void PdfScrollViewer_PreviewMouseDown(object sender, MouseButtonEventArgs e)
         {
             if (e.ChangedButton == MouseButton.Middle)
@@ -1011,22 +1283,350 @@ namespace WindowsNotesApp.Pages
 
         private void CreateToolPopups()
         {
+            // Pen popup — with size preview section
+            Line penSizePreview = null;
             _penPopup = BuildToolPopup(
-                "Size", 1, 20, _penSize, 0.5,
-                v => { _penSize = v; if (_currentTool == ToolType.Pen) ApplyToolToAllPages(); },
-                "Color", _penColor,
-                c => { _penColor = c; UpdateToolIconColors(); if (_currentTool == ToolType.Pen) ApplyToolToAllPages(); });
+                LocalizationService.Get("Editor.PopupSize"), 0.5, 8, _penSize, 0.25,
+                v => { _penSize = v; if (penSizePreview != null) penSizePreview.StrokeThickness = v; if (_currentTool == ToolType.Pen) ApplyToolToAllPages(); },
+                LocalizationService.Get("Editor.PopupColor"), _penColor,
+                c => { _penColor = c; if (penSizePreview != null) penSizePreview.Stroke = new SolidColorBrush(c); UpdateToolIconColors(); if (_currentTool == ToolType.Pen) ApplyToolToAllPages(); });
+            penSizePreview = AddSizePreviewSection(_penPopup, _penSize, _penColor, isHighlighter: false);
 
+            // Highlighter popup — with size preview section
+            Line hlSizePreview = null;
             _highlighterPopup = BuildToolPopup(
-                "Size", 4, 40, _highlighterSize, 1,
-                v => { _highlighterSize = v; if (_currentTool == ToolType.Highlighter) ApplyToolToAllPages(); },
-                "Color", _highlighterColor,
-                c => { _highlighterColor = c; UpdateToolIconColors(); if (_currentTool == ToolType.Highlighter) ApplyToolToAllPages(); });
+                LocalizationService.Get("Editor.PopupSize"), 2, 20, _highlighterSize, 0.5,
+                v => { _highlighterSize = v; if (hlSizePreview != null) hlSizePreview.StrokeThickness = v; if (_currentTool == ToolType.Highlighter) ApplyToolToAllPages(); },
+                LocalizationService.Get("Editor.PopupColor"), _highlighterColor,
+                c => { _highlighterColor = c; if (hlSizePreview != null) hlSizePreview.Stroke = new SolidColorBrush(Color.FromArgb(140, c.R, c.G, c.B)); UpdateToolIconColors(); if (_currentTool == ToolType.Highlighter) ApplyToolToAllPages(); });
+            hlSizePreview = AddSizePreviewSection(_highlighterPopup, _highlighterSize, _highlighterColor, isHighlighter: true);
 
             _eraserPopup = BuildToolPopup(
-                "Eraser Size", 4, 80, _eraserSize, 1,
-                v => { _eraserSize = v; ApplyToolToAllPages(); },
+                LocalizationService.Get("Editor.PopupEraserSize"), 4, 80, _eraserSize, 1,
+                v => { _eraserSize = v; ShowEraserSizePreview(v); ApplyToolToAllPages(); },
                 null, default, null);
+
+            CreateSelectionPopup();
+        }
+
+        private Line AddSizePreviewSection(Popup popup, double initialSize, Color initialColor, bool isHighlighter)
+        {
+            if (popup?.Child is not Border border || border.Child is not StackPanel panel)
+                return null;
+
+            panel.Children.Add(new Border
+            {
+                Height = 1,
+                Background = new SolidColorBrush(Color.FromArgb(25, 0, 0, 0)),
+                Margin = new Thickness(-16, 14, -16, 10)
+            });
+
+            panel.Children.Add(new TextBlock
+            {
+                Text = LocalizationService.Get("Editor.PopupPreview"),
+                FontSize = 13,
+                FontWeight = FontWeights.SemiBold,
+                Foreground = new SolidColorBrush(Color.FromRgb(80, 80, 80)),
+                Margin = new Thickness(0, 0, 0, 8)
+            });
+
+            var previewBorder = new Border
+            {
+                Height = 60,
+                Background = new SolidColorBrush(Color.FromArgb(18, 0, 0, 0)),
+                CornerRadius = new CornerRadius(8),
+                ClipToBounds = true
+            };
+
+            Line line;
+            if (isHighlighter)
+            {
+                // Highlighter: horizontal stroke band showing actual stroke height
+                line = new Line
+                {
+                    X1 = 8, Y1 = 30, X2 = 212, Y2 = 30,
+                    Stroke = new SolidColorBrush(Color.FromArgb(140, initialColor.R, initialColor.G, initialColor.B)),
+                    StrokeThickness = initialSize,
+                    StrokeStartLineCap = PenLineCap.Round,
+                    StrokeEndLineCap = PenLineCap.Round
+                };
+            }
+            else
+            {
+                // Pen: diagonal stroke line showing actual stroke width
+                line = new Line
+                {
+                    X1 = 8, Y1 = 48, X2 = 212, Y2 = 12,
+                    Stroke = new SolidColorBrush(initialColor),
+                    StrokeThickness = initialSize,
+                    StrokeStartLineCap = PenLineCap.Round,
+                    StrokeEndLineCap = PenLineCap.Round
+                };
+            }
+
+            previewBorder.Child = line;
+            panel.Children.Add(previewBorder);
+            return line;
+        }
+
+        private CancellationTokenSource _eraserPreviewCts;
+
+        private void ShowEraserSizePreview(double size)
+        {
+            EraserSizePreviewEllipse.Width = size;
+            EraserSizePreviewEllipse.Height = size;
+            EraserSizePreviewEllipse.Visibility = Visibility.Visible;
+
+            _eraserPreviewCts?.Cancel();
+            _eraserPreviewCts = new CancellationTokenSource();
+            var token = _eraserPreviewCts.Token;
+
+            Task.Delay(1200).ContinueWith(_ =>
+            {
+                if (!token.IsCancellationRequested)
+                    Dispatcher.Invoke(() => EraserSizePreviewEllipse.Visibility = Visibility.Collapsed);
+            }, TaskScheduler.Default);
+        }
+
+        private void CreateSelectionPopup()
+        {
+            // ── Settings popup (opens when Select button is clicked) ────────────────
+            _selectionPopup = new Popup { Placement = PlacementMode.Bottom, StaysOpen = true, AllowsTransparency = true, VerticalOffset = 6 };
+
+            var settingsPanel = new StackPanel { Margin = new Thickness(14, 12, 14, 12) };
+            var settingsBorder = new Border
+            {
+                Background = new SolidColorBrush(Color.FromArgb(250, 255, 255, 255)),
+                BorderBrush = new SolidColorBrush(Color.FromArgb(30, 0, 0, 0)),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(12),
+                Child = settingsPanel,
+                Effect = new System.Windows.Media.Effects.DropShadowEffect
+                {
+                    BlurRadius = 20, ShadowDepth = 4, Opacity = 0.12, Color = Colors.Black
+                }
+            };
+
+            // ── Shape section ──────────────────────────────────────────────────────
+            settingsPanel.Children.Add(new TextBlock
+            {
+                Text = LocalizationService.Get("Editor.SelectShape"),
+                FontSize = 12,
+                FontWeight = FontWeights.SemiBold,
+                Foreground = new SolidColorBrush(Color.FromRgb(80, 80, 80)),
+                Margin = new Thickness(0, 0, 0, 8)
+            });
+
+            var shapePanel = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 12) };
+
+            Button MakeShapeButton(string icon, string tooltip, SelectionShape shape)
+            {
+                var isActive = _selectionShape == shape;
+                var btn = new Button
+                {
+                    Width = 36, Height = 32,
+                    Margin = new Thickness(0, 0, 6, 0),
+                    Padding = new Thickness(0),
+                    Cursor = Cursors.Hand,
+                    BorderThickness = new Thickness(1),
+                    ToolTip = tooltip,
+                    Tag = shape
+                };
+                btn.Template = CreateIconButtonTemplate("#E8E8E8", "#DCDCDC");
+                btn.Content = new TextBlock
+                {
+                    Text = icon,
+                    FontFamily = new FontFamily("Segoe MDL2 Assets"),
+                    FontSize = 14,
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    VerticalAlignment = VerticalAlignment.Center
+                };
+                UpdateFilterButtonStyle(btn, isActive);
+                btn.Click += (s, ev) =>
+                {
+                    _selectionShape = (SelectionShape)((Button)s).Tag;
+                    ApplyToolToAllPages();
+                    foreach (Button b in shapePanel.Children)
+                        UpdateFilterButtonStyle(b, (SelectionShape)b.Tag == _selectionShape);
+                };
+                return btn;
+            }
+
+            shapePanel.Children.Add(MakeShapeButton("\uE73F", LocalizationService.Get("Editor.SelectShapeRect"), SelectionShape.Rectangle));
+            shapePanel.Children.Add(MakeShapeButton("\uED63", LocalizationService.Get("Editor.SelectShapeFree"), SelectionShape.FreeForm));
+            settingsPanel.Children.Add(shapePanel);
+
+            // ── Filter section header
+            settingsPanel.Children.Add(new TextBlock
+            {
+                Text = LocalizationService.Get("Editor.SelectFilter"),
+                FontSize = 12,
+                FontWeight = FontWeights.SemiBold,
+                Foreground = new SolidColorBrush(Color.FromRgb(80, 80, 80)),
+                Margin = new Thickness(0, 0, 0, 8)
+            });
+
+            // Filter radio buttons
+            var filterPanel = new StackPanel { Orientation = Orientation.Horizontal };
+
+            Button MakeFilterButton(string label, SelectionFilter filter)
+            {
+                var isActive = _selectionFilter == filter;
+                var btn = new Button
+                {
+                    Content = label,
+                    Margin = new Thickness(0, 0, 6, 0),
+                    Padding = new Thickness(10, 5, 10, 5),
+                    FontSize = 12,
+                    Cursor = Cursors.Hand,
+                    BorderThickness = new Thickness(1),
+                    Tag = filter
+                };
+                btn.Template = CreateIconButtonTemplate("#E8E8E8", "#DCDCDC");
+                UpdateFilterButtonStyle(btn, isActive);
+                btn.Click += (s, ev) =>
+                {
+                    _selectionFilter = (SelectionFilter)((Button)s).Tag;
+                    ApplyToolToAllPages();
+                    // Refresh all filter button styles
+                    foreach (Button b in filterPanel.Children)
+                        UpdateFilterButtonStyle(b, (SelectionFilter)b.Tag == _selectionFilter);
+                };
+                return btn;
+            }
+
+            filterPanel.Children.Add(MakeFilterButton(LocalizationService.Get("Editor.SelectFilterBoth"), SelectionFilter.Both));
+            filterPanel.Children.Add(MakeFilterButton(LocalizationService.Get("Editor.SelectFilterDrawings"), SelectionFilter.DrawingsOnly));
+            filterPanel.Children.Add(MakeFilterButton(LocalizationService.Get("Editor.SelectFilterText"), SelectionFilter.TextOnly));
+
+            settingsPanel.Children.Add(filterPanel);
+            _selectionPopup.Child = settingsBorder;
+
+            // ── Action popup (opens when annotations are selected) ──────────────────
+            _selectionActionPopup = new Popup { Placement = PlacementMode.Bottom, StaysOpen = true, AllowsTransparency = true, VerticalOffset = 6 };
+
+            var actionPanel = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(6, 6, 6, 6) };
+            var actionBorder = new Border
+            {
+                Background = new SolidColorBrush(Color.FromArgb(245, 255, 255, 255)),
+                BorderBrush = new SolidColorBrush(Color.FromArgb(20, 0, 0, 0)),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(12),
+                Child = actionPanel,
+                Effect = new System.Windows.Media.Effects.DropShadowEffect
+                {
+                    BlurRadius = 20, ShadowDepth = 4, Opacity = 0.14, Color = Colors.Black
+                }
+            };
+
+            var scaleDownButton = new Button
+            {
+                Width = 36, Height = 32,
+                Background = Brushes.Transparent,
+                BorderThickness = new Thickness(0),
+                Cursor = Cursors.Hand,
+                ToolTip = LocalizationService.Get("Editor.ZoomOutTooltip"),
+                Margin = new Thickness(2)
+            };
+            scaleDownButton.Template = CreateIconButtonTemplate("#E8E8E8", "#DCDCDC");
+            scaleDownButton.Content = new TextBlock
+            {
+                Text = "\uE738",
+                FontFamily = new FontFamily("Segoe MDL2 Assets"),
+                FontSize = 14,
+                Foreground = new SolidColorBrush(Color.FromRgb(85, 85, 85)),
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            scaleDownButton.Click += (s, e) => ScaleSelection(0.9);
+
+            var scaleUpButton = new Button
+            {
+                Width = 36, Height = 32,
+                Background = Brushes.Transparent,
+                BorderThickness = new Thickness(0),
+                Cursor = Cursors.Hand,
+                ToolTip = LocalizationService.Get("Editor.ZoomInTooltip"),
+                Margin = new Thickness(2)
+            };
+            scaleUpButton.Template = CreateIconButtonTemplate("#E8E8E8", "#DCDCDC");
+            scaleUpButton.Content = new TextBlock
+            {
+                Text = "\uE710",
+                FontFamily = new FontFamily("Segoe MDL2 Assets"),
+                FontSize = 14,
+                Foreground = new SolidColorBrush(Color.FromRgb(85, 85, 85)),
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            scaleUpButton.Click += (s, e) => ScaleSelection(1.1);
+
+            var deleteButton = new Button
+            {
+                Width = 36, Height = 32,
+                Background = Brushes.Transparent,
+                BorderThickness = new Thickness(0),
+                Cursor = Cursors.Hand,
+                ToolTip = LocalizationService.Get("Editor.DeleteTooltip"),
+                Margin = new Thickness(2)
+            };
+            deleteButton.Template = CreateIconButtonTemplate("#FECACA", "#FCA5A5");
+            deleteButton.Content = new TextBlock
+            {
+                Text = "\uE74D",
+                FontFamily = new FontFamily("Segoe MDL2 Assets"),
+                FontSize = 14,
+                Foreground = new SolidColorBrush(Color.FromRgb(220, 38, 38)),
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            deleteButton.Click += (s, e) => DeleteSelection();
+
+            actionPanel.Children.Add(scaleDownButton);
+            actionPanel.Children.Add(scaleUpButton);
+
+            var sep = new Border { Width = 1, Background = new SolidColorBrush(Color.FromArgb(20, 0, 0, 0)), Margin = new Thickness(4, 6, 4, 6) };
+            actionPanel.Children.Add(sep);
+            actionPanel.Children.Add(deleteButton);
+
+            _selectionActionPopup.Child = actionBorder;
+        }
+
+        private void UpdateFilterButtonStyle(Button btn, bool isActive)
+        {
+            btn.Background = isActive
+                ? new SolidColorBrush(Color.FromArgb(34, 0, 120, 212))
+                : Brushes.Transparent;
+            btn.BorderBrush = isActive
+                ? new SolidColorBrush(Color.FromRgb(0, 120, 212))
+                : new SolidColorBrush(Color.FromArgb(40, 0, 0, 0));
+            btn.Foreground = isActive
+                ? new SolidColorBrush(Color.FromRgb(0, 90, 160))
+                : new SolidColorBrush(Color.FromRgb(60, 60, 60));
+        }
+
+        private void ScaleSelection(double factor)
+        {
+            if (_activeSelectionPage == null || !_activeSelectionPage.HasSelection)
+                return;
+
+            var bounds = _activeSelectionPage.GetSelectionBounds();
+            if (bounds.IsEmpty)
+                return;
+
+            var center = new Point(bounds.Left + bounds.Width / 2, bounds.Top + bounds.Height / 2);
+            _activeSelectionPage.ScaleSelection(factor, center);
+            MarkDirty();
+        }
+
+        private void DeleteSelection()
+        {
+            if (_activeSelectionPage == null)
+                return;
+
+            _activeSelectionPage.ClearSelection();
+            _selectionActionPopup.IsOpen = false;
+            MarkDirty();
         }
 
         private Popup BuildToolPopup(
@@ -1133,12 +1733,12 @@ namespace WindowsNotesApp.Pages
                             double val = 1.0;
                             if (row <= rows / 2)
                             {
-                                // Top half: full value, varying saturation (light 閳?saturated)
+                                // Top half: full value, varying saturation (light 闁?saturated)
                                 saturation = (double)row / (rows / 2);
                             }
                             else
                             {
-                                // Bottom half: full saturation, decreasing value (saturated 閳?dark)
+                                // Bottom half: full saturation, decreasing value (saturated 闁?dark)
                                 val = 1.0 - (double)(row - rows / 2) / (rows / 2);
                             }
                             cellColor = HsvToColor(hue, saturation, val);
@@ -1191,12 +1791,71 @@ namespace WindowsNotesApp.Pages
 
         private void EditorPage_PreviewMouseDown(object sender, MouseButtonEventArgs e)
         {
-            CloseToolPopups();
+            if (ShouldClosePopupAndConsume(e.OriginalSource as DependencyObject))
+            {
+                CloseToolPopups();
+                e.Handled = true;
+            }
         }
 
         private void EditorPage_PreviewStylusDown(object sender, StylusDownEventArgs e)
         {
-            CloseToolPopups();
+            if (ShouldClosePopupAndConsume(e.OriginalSource as DependencyObject))
+            {
+                CloseToolPopups();
+                e.Handled = true;
+            }
+        }
+
+        private bool ShouldClosePopupAndConsume(DependencyObject originalSource)
+        {
+            if (originalSource == null) return false;
+
+            var popups = new[] { _penPopup, _highlighterPopup, _eraserPopup, _selectionPopup };
+            bool anyPopupOpen = false;
+            foreach (var popup in popups)
+            {
+                if (popup != null && popup.IsOpen)
+                {
+                    anyPopupOpen = true;
+                    if (IsSourceInPopup(originalSource, popup))
+                    {
+                        return false;
+                    }
+                }
+            }
+
+            if (!anyPopupOpen) return false;
+
+            if (IsSourceInToolbar(originalSource))
+            {
+                return false;
+            }
+
+            return true;
+        }
+
+        private bool IsSourceInPopup(DependencyObject source, Popup popup)
+        {
+            if (popup?.Child == null) return false;
+            return IsDescendantOf(source, popup.Child);
+        }
+
+        private bool IsSourceInToolbar(DependencyObject source)
+        {
+            return IsDescendantOf(source, ToolbarBorder);
+        }
+
+        private bool IsDescendantOf(DependencyObject descendant, DependencyObject ancestor)
+        {
+            if (descendant == null || ancestor == null) return false;
+            var current = descendant;
+            while (current != null)
+            {
+                if (current == ancestor) return true;
+                current = VisualTreeHelper.GetParent(current) ?? LogicalTreeHelper.GetParent(current);
+            }
+            return false;
         }
 
         private void CloseToolPopups(ToolType toolToKeepOpen = ToolType.None)
@@ -1209,9 +1868,14 @@ namespace WindowsNotesApp.Pages
 
             if (toolToKeepOpen != ToolType.Eraser && _eraserPopup != null)
                 _eraserPopup.IsOpen = false;
+
+            if (toolToKeepOpen != ToolType.Select && _selectionPopup != null)
+                _selectionPopup.IsOpen = false;
+            if (toolToKeepOpen != ToolType.Select && _selectionActionPopup != null)
+                _selectionActionPopup.IsOpen = false;
         }
 
-        private void ToggleToolButton(ToolType tool, Button button, Popup popup = null)
+        private void ToggleToolButton(ToolType tool, ToggleButton button, Popup popup = null)
         {
             if (_isUpdatingToolState) return;
 
@@ -1226,7 +1890,12 @@ namespace WindowsNotesApp.Pages
 
             ActivateTool(tool);
 
-            if (popup != null)
+            if (tool == ToolType.Select && _selectionPopup != null)
+            {
+                _selectionPopup.PlacementTarget = button;
+                _selectionPopup.IsOpen = true;
+            }
+            else if (popup != null)
             {
                 popup.PlacementTarget = button;
                 popup.IsOpen = true;
@@ -1293,9 +1962,15 @@ namespace WindowsNotesApp.Pages
 
                     pageControl.TextOverlayPointerPressed += PageControl_TextOverlayPointerPressed;
                     pageControl.BackgroundPointerPressed += PageControl_BackgroundPointerPressed;
+                    pageControl.PdfTextSelectionPointerPressed += PageControl_PdfTextSelectionPointerPressed;
+                    pageControl.PdfTextSelectionPointerMoved += PageControl_PdfTextSelectionPointerMoved;
+                    pageControl.PdfTextSelectionPointerReleased += PageControl_PdfTextSelectionPointerReleased;
                     pageControl.InkMutated += PageControl_InkMutated;
                     pageControl.StrokeCollectedUndoable += PageControl_StrokeCollectedUndoable;
                     pageControl.ModeChanged += PageControl_ModeChanged;
+                    pageControl.SelectionChanged += PageControl_SelectionChanged;
+                    pageControl.SelectionMoveCompleted += PageControl_SelectionMoveCompleted;
+                    pageControl.SelectionResizeCompleted += PageControl_SelectionResizeCompleted;
 
                     if (_penService != null)
                         pageControl.SetPenService(_penService);
@@ -1337,7 +2012,13 @@ namespace WindowsNotesApp.Pages
                     errorMsg += $"\n\nDetails: {ex.InnerException.Message}";
 
                 if (sessionId == _loadSessionId)
-                    MessageBox.Show(errorMsg, "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                {
+                    var mw = GetMainWindow();
+                    if (mw != null)
+                        await DialogService.ShowErrorAsync(mw, "Error", errorMsg);
+                    else
+                        MessageBox.Show(errorMsg, "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                }
             }
             finally
             {
@@ -1349,7 +2030,7 @@ namespace WindowsNotesApp.Pages
         /// <summary>
         /// Renders a single page's initial image using the fast BitmapSource path.
         /// Only renders if the page hasn't been rendered yet.
-        /// Does NOT adjust scroll 閳?the caller is responsible for anchor save/restore.
+        /// Does NOT adjust scroll 闁?the caller is responsible for anchor save/restore.
         /// </summary>
         private async Task RenderPageInitialAsync(PdfPageControl page, CancellationToken token)
         {
@@ -1386,6 +2067,46 @@ namespace WindowsNotesApp.Pages
             }
         }
 
+        private void PageControl_SelectionChanged(object sender, AnnotationSelectionChangedEventArgs e)
+        {
+            if (_currentTool != ToolType.Select) return;
+
+            if (sender is PdfPageControl page)
+            {
+                _activeSelectionPage = page;
+            }
+
+            if (e.HasSelection)
+            {
+                _selectionActionPopup.PlacementTarget = SelectToolButton;
+                _selectionActionPopup.IsOpen = true;
+            }
+            else
+            {
+                _selectionActionPopup.IsOpen = false;
+            }
+        }
+
+        private void PageControl_SelectionMoveCompleted(object sender, SelectionMoveCompletedEventArgs e)
+        {
+            if (sender is not PdfPageControl page) return;
+            var action = new SelectionMoveAction(page, e.DeltaX, e.DeltaY, e.SelectedStrokes, e.SelectedTextContainers);
+            _undoStack.Add(action);
+            _redoStack.Clear();
+            UpdateUndoRedoButtons();
+            MarkDirty();
+        }
+
+        private void PageControl_SelectionResizeCompleted(object sender, SelectionResizeCompletedEventArgs e)
+        {
+            if (sender is not PdfPageControl page) return;
+            var action = new SelectionResizeAction(page, e.TotalScale, e.Anchor, e.SelectedStrokes, e.SelectedTextContainers);
+            _undoStack.Add(action);
+            _redoStack.Clear();
+            UpdateUndoRedoButtons();
+            MarkDirty();
+        }
+
         private void PenToolButton_Click(object sender, RoutedEventArgs e)
         {
             ToggleToolButton(ToolType.Pen, PenToolButton, _penPopup);
@@ -1405,6 +2126,12 @@ namespace WindowsNotesApp.Pages
         {
             ToggleToolButton(ToolType.Text, TextToolButton);
         }
+
+        private void SelectToolButton_Click(object sender, RoutedEventArgs e)
+        {
+            ToggleToolButton(ToolType.Select, SelectToolButton);
+        }
+
         private void ActivateTool(ToolType tool)
         {
             if (_currentTool == tool) return;
@@ -1418,10 +2145,11 @@ namespace WindowsNotesApp.Pages
             _currentTool = tool;
             CloseToolPopups(tool);
 
-            PenToolButton.Background = tool == ToolType.Pen ? new SolidColorBrush(Color.FromArgb(34, 0, 120, 212)) : Brushes.Transparent;
-            HighlighterToolButton.Background = tool == ToolType.Highlighter ? new SolidColorBrush(Color.FromArgb(34, 0, 120, 212)) : Brushes.Transparent;
-            EraserToolButton.Background = tool == ToolType.Eraser ? new SolidColorBrush(Color.FromArgb(34, 0, 120, 212)) : Brushes.Transparent;
-            TextToolButton.Background = tool == ToolType.Text ? new SolidColorBrush(Color.FromArgb(34, 0, 120, 212)) : Brushes.Transparent;
+            PenToolButton.IsChecked = tool == ToolType.Pen;
+            HighlighterToolButton.IsChecked = tool == ToolType.Highlighter;
+            EraserToolButton.IsChecked = tool == ToolType.Eraser;
+            TextToolButton.IsChecked = tool == ToolType.Text;
+            SelectToolButton.IsChecked = tool == ToolType.Select;
 
             _isUpdatingToolState = false;
 
@@ -1449,6 +2177,10 @@ namespace WindowsNotesApp.Pages
             foreach (var page in _pageControls)
             {
                 page.SetMode(_currentTool == ToolType.Text);
+                page.SetPdfTextSelectionEnabled(_currentTool == ToolType.None);
+                page.SetSelectionMode(_currentTool == ToolType.Select);
+                page.SetSelectionFilter(_selectionFilter);
+                page.SetSelectionShape(_selectionShape);
                 var atts = page.CopyDefaultDrawingAttributes();
 
                 switch (_currentTool)
@@ -1476,6 +2208,9 @@ namespace WindowsNotesApp.Pages
                         page.SetInputMode(CustomInkInputProcessingMode.Erasing);
                         break;
                     case ToolType.Text:
+                        page.SetInputMode(CustomInkInputProcessingMode.None);
+                        break;
+                    case ToolType.Select:
                         page.SetInputMode(CustomInkInputProcessingMode.None);
                         break;
                 }
@@ -1711,7 +2446,7 @@ namespace WindowsNotesApp.Pages
         // - Switching tools
         // - Clicking outside in PageControl_BackgroundPointerPressed
 
-        private void FontSizeComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        private void FontSizeComboBox_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
         {
             if (_selectedTextBox == null || _fontSizeComboBox.SelectedItem == null) return;
             var content = _fontSizeComboBox.SelectedItem is ComboBoxItem cbi ? cbi.Content?.ToString() : _fontSizeComboBox.SelectedItem.ToString();
@@ -2046,19 +2781,20 @@ namespace WindowsNotesApp.Pages
 
             try
             {
-                ShowLoadingOverlay();
                 var annotations = CollectAnnotations();
 
                 await _pdfService.SaveAnnotationsToPdfAsync(_currentPdfPath, annotations);
                 _isDirty = false;
 
-                HideLoadingOverlay();
                 GetMainWindow()?.ShowToast("Saved successfully");
             }
             catch (Exception ex)
             {
-                HideLoadingOverlay();
-                MessageBox.Show($"Failed to save annotations: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                var mw = GetMainWindow();
+                if (mw != null)
+                    await DialogService.ShowErrorAsync(mw, "Error", $"Failed to save annotations: {ex.Message}");
+                else
+                    MessageBox.Show($"Failed to save annotations: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
 
@@ -2204,6 +2940,9 @@ namespace WindowsNotesApp.Pages
                 pageControl.BackgroundPointerPressed -= PageControl_BackgroundPointerPressed;
                 pageControl.InkMutated -= PageControl_InkMutated;
                 pageControl.StrokeCollectedUndoable -= PageControl_StrokeCollectedUndoable;
+                pageControl.SelectionChanged -= PageControl_SelectionChanged;
+                pageControl.SelectionMoveCompleted -= PageControl_SelectionMoveCompleted;
+                pageControl.SelectionResizeCompleted -= PageControl_SelectionResizeCompleted;
             }
         }
 
@@ -2248,13 +2987,32 @@ namespace WindowsNotesApp.Pages
         [DllImport("user32.dll")]
         private static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
 
+        [DllImport("user32.dll")]
+        private static extern int GetWindowLong(IntPtr hWnd, int nIndex);
+
+        [DllImport("user32.dll")]
+        private static extern int SetWindowLong(IntPtr hWnd, int nIndex, int dwNewLong);
+
         private void FixPopupTopmost(Popup popup)
         {
             popup.Opened += (s, e) =>
             {
                 var source = PresentationSource.FromVisual(popup.Child) as System.Windows.Interop.HwndSource;
                 if (source != null)
+                {
+                    // Remove topmost z-order imposed by WPF's transparent popup
                     SetWindowPos(source.Handle, new IntPtr(-2), 0, 0, 0, 0, 0x0010 | 0x0002 | 0x0001);
+                    // Add WS_EX_NOACTIVATE so the popup never steals Windows-level focus
+                    // from the main window. Without this, interacting with a Slider or
+                    // other focusable control inside the popup causes the popup HWND to
+                    // become the active window; the first subsequent click on the main
+                    // window is then swallowed by Windows to re-activate it, making
+                    // toolbar buttons appear to require two clicks.
+                    const int GWL_EXSTYLE = -20;
+                    const int WS_EX_NOACTIVATE = 0x08000000;
+                    int exStyle = GetWindowLong(source.Handle, GWL_EXSTYLE);
+                    SetWindowLong(source.Handle, GWL_EXSTYLE, exStyle | WS_EX_NOACTIVATE);
+                }
             };
         }
 

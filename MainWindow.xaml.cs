@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -10,13 +10,14 @@ using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
+using System.Windows.Media.Effects;
 using System.Windows.Media.Imaging;
 using System.Windows.Navigation;
-using WindowsNotesApp.Models;
-using WindowsNotesApp.Pages;
-using WindowsNotesApp.Services;
+using Caelum.Models;
+using Caelum.Pages;
+using Caelum.Services;
 
-namespace WindowsNotesApp
+namespace Caelum
 {
     public partial class MainWindow : Window
     {
@@ -30,6 +31,7 @@ namespace WindowsNotesApp
             SourceInitialized += MainWindow_SourceInitialized;
             StateChanged += MainWindow_StateChanged;
             KeyDown += MainWindow_KeyDown;
+            TitleBarBorder.MouseLeftButtonDown += (sender, args) => DragMove();
             ApplyLocalization();
 
             // Create the first Home tab
@@ -235,20 +237,21 @@ namespace WindowsNotesApp
             {
                 Text = tab.Icon,
                 FontFamily = new FontFamily("Segoe MDL2 Assets"),
-                FontSize = 12,
-                Foreground = new SolidColorBrush(isActive ? Color.FromRgb(0, 120, 212) : Color.FromRgb(100, 100, 100)),
+                FontSize = 14,
+                Foreground = new SolidColorBrush(isActive ? Color.FromRgb(30, 30, 30) : Color.FromRgb(120, 120, 120)),
                 VerticalAlignment = VerticalAlignment.Center,
-                Margin = new Thickness(0, 0, 6, 0)
+                Margin = new Thickness(0, 0, 8, 0)
             };
 
             var title = new TextBlock
             {
                 Text = tab.Title.Length > 20 ? tab.Title.Substring(0, 17) + "..." : tab.Title,
-                FontSize = 12,
-                Foreground = new SolidColorBrush(isActive ? Color.FromRgb(30, 30, 30) : Color.FromRgb(100, 100, 100)),
+                FontSize = 14,
+                Foreground = new SolidColorBrush(isActive ? Color.FromRgb(30, 30, 30) : Color.FromRgb(120, 120, 120)),
                 VerticalAlignment = VerticalAlignment.Center,
                 MaxWidth = 150,
-                TextTrimming = TextTrimming.CharacterEllipsis
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                FontWeight = isActive ? FontWeights.Medium : FontWeights.Normal
             };
 
             var closeBtn = new Button
@@ -257,15 +260,15 @@ namespace WindowsNotesApp
                 {
                     Text = "\uE8BB",
                     FontFamily = new FontFamily("Segoe MDL2 Assets"),
-                    FontSize = 9,
-                    Foreground = new SolidColorBrush(Color.FromRgb(120, 120, 120))
+                    FontSize = 11,
+                    Foreground = new SolidColorBrush(isActive ? Color.FromRgb(80, 80, 80) : Color.FromRgb(150, 150, 150))
                 },
-                Width = 20,
-                Height = 20,
+                Width = 24,
+                Height = 24,
                 Background = Brushes.Transparent,
                 BorderThickness = new Thickness(0),
                 Cursor = Cursors.Hand,
-                Margin = new Thickness(6, 0, 0, 0),
+                Margin = new Thickness(8, 0, 0, 0),
                 VerticalAlignment = VerticalAlignment.Center,
                 Visibility = _tabs.Count > 1 ? Visibility.Visible : Visibility.Collapsed,
                 ToolTip = LocalizationService.Get("Main.CloseTabTooltip")
@@ -275,7 +278,7 @@ namespace WindowsNotesApp
             var closeBtnTemplate = new ControlTemplate(typeof(Button));
             var closeBorder = new FrameworkElementFactory(typeof(Border));
             closeBorder.SetValue(Border.BackgroundProperty, Brushes.Transparent);
-            closeBorder.SetValue(Border.CornerRadiusProperty, new CornerRadius(4));
+            closeBorder.SetValue(Border.CornerRadiusProperty, new CornerRadius(6));
             closeBorder.Name = "CloseBg";
             var closeContent = new FrameworkElementFactory(typeof(ContentPresenter));
             closeContent.SetValue(ContentPresenter.HorizontalAlignmentProperty, HorizontalAlignment.Center);
@@ -284,7 +287,7 @@ namespace WindowsNotesApp
             closeBtnTemplate.VisualTree = closeBorder;
 
             var hoverTrigger = new Trigger { Property = UIElement.IsMouseOverProperty, Value = true };
-            hoverTrigger.Setters.Add(new Setter(Border.BackgroundProperty, new SolidColorBrush(Color.FromArgb(48, 255, 255, 255)), "CloseBg"));
+            hoverTrigger.Setters.Add(new Setter(Border.BackgroundProperty, new SolidColorBrush(Color.FromArgb(20, 0, 0, 0)), "CloseBg"));
             closeBtnTemplate.Triggers.Add(hoverTrigger);
 
             closeBtn.Template = closeBtnTemplate;
@@ -295,7 +298,7 @@ namespace WindowsNotesApp
             var panel = new StackPanel
             {
                 Orientation = Orientation.Horizontal,
-                Margin = new Thickness(10, 0, 6, 0)
+                Margin = new Thickness(14, 0, 10, 0)
             };
             panel.Children.Add(icon);
             panel.Children.Add(title);
@@ -304,13 +307,35 @@ namespace WindowsNotesApp
             var border = new Border
             {
                 Child = panel,
-                Background = new SolidColorBrush(isActive ? Color.FromArgb(86, 255, 255, 255) : Color.FromArgb(20, 255, 255, 255)),
-                CornerRadius = new CornerRadius(8, 8, 0, 0),
-                Margin = new Thickness(1, 4, 1, 0),
-                Padding = new Thickness(2, 4, 2, 4),
+                Background = new SolidColorBrush(isActive ? Color.FromRgb(255, 255, 255) : Color.FromArgb(0, 255, 255, 255)),
+                CornerRadius = new CornerRadius(16),
+                Margin = new Thickness(2, 2, 2, 2),
+                Padding = new Thickness(2, 6, 2, 6),
                 Cursor = Cursors.Hand,
-                BorderThickness = new Thickness(1, 1, 1, 0),
-                BorderBrush = new SolidColorBrush(isActive ? Color.FromArgb(110, 255, 255, 255) : Color.FromArgb(40, 255, 255, 255))
+                BorderThickness = new Thickness(0)
+            };
+
+            if (isActive)
+            {
+                border.Effect = new DropShadowEffect
+                {
+                    BlurRadius = 16,
+                    ShadowDepth = 0,
+                    Opacity = 0.08,
+                    Color = Color.FromRgb(0, 0, 0)
+                };
+            }
+
+            border.MouseEnter += (s, e) =>
+            {
+                if (!isActive)
+                    border.Background = new SolidColorBrush(Color.FromRgb(248, 250, 252));
+            };
+
+            border.MouseLeave += (s, e) =>
+            {
+                if (!isActive)
+                    border.Background = new SolidColorBrush(Color.FromArgb(0, 255, 255, 255));
             };
 
             border.MouseLeftButtonDown += (s, e) => ActivateTab(capturedTab);
@@ -572,9 +597,9 @@ namespace WindowsNotesApp
             OpenSettingsDialog();
         }
 
-        private void About_Click(object sender, RoutedEventArgs e)
+        private async void About_Click(object sender, RoutedEventArgs e)
         {
-            MessageBox.Show(LocalizationService.Get("Main.AboutMessage"), LocalizationService.Get("Main.AboutTitle"), MessageBoxButton.OK, MessageBoxImage.Information);
+            await DialogService.ShowInfoAsync(this, LocalizationService.Get("Main.AboutTitle"), LocalizationService.Get("Main.AboutMessage"));
         }
 
         // 鈹€鈹€鈹€ Toast 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
@@ -634,29 +659,9 @@ namespace WindowsNotesApp
 
         private void EnableAcrylicBlur(IntPtr handle)
         {
-            int backdropType = 3;
+            // Solid white background — no acrylic/DWM backdrop needed
+            int backdropType = 1; // DWMWCP_DEFAULT
             DwmSetWindowAttribute(handle, 38, ref backdropType, Marshal.SizeOf(typeof(int)));
-
-            var accent = new AccentPolicy
-            {
-                AccentState = 4,
-                AccentFlags = 2,
-                GradientColor = unchecked((int)0x99000000)
-            };
-
-            var accentSize = Marshal.SizeOf(accent);
-            var accentPtr = Marshal.AllocHGlobal(accentSize);
-            Marshal.StructureToPtr(accent, accentPtr, false);
-
-            var data = new WindowCompositionAttributeData
-            {
-                Attribute = 19,
-                Data = accentPtr,
-                SizeOfData = accentSize
-            };
-
-            SetWindowCompositionAttribute(handle, ref data);
-            Marshal.FreeHGlobal(accentPtr);
         }
     }
 }

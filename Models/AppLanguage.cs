@@ -1,4 +1,4 @@
-﻿namespace WindowsNotesApp.Models
+namespace Caelum.Models
 {
     public enum AppLanguage
     {

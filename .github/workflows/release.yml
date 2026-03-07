@@ -25,7 +25,7 @@ jobs:
       # ── Publish as a normal folder (NOT single-file) so pdfium.dll stays intact ──
       - name: Publish (self-contained)
         run: >
-          dotnet publish WindowsNotesApp.csproj
+          dotnet publish Caelum.csproj
           -c Release
           -r win-x64
           --self-contained true

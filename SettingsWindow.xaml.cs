@@ -1,15 +1,24 @@
-﻿using System.Windows;
-using WindowsNotesApp.Models;
-using WindowsNotesApp.Services;
+using System.Windows;
+using System.Windows.Controls;
+using Caelum.Models;
+using Caelum.Services;
 
-namespace WindowsNotesApp
+namespace Caelum
 {
     public partial class SettingsWindow : Window
     {
+        private readonly AppSettings _originalSettings;
+
         public SettingsWindow(AppSettings currentSettings)
         {
+            _originalSettings = new AppSettings
+            {
+                Language = currentSettings.Language
+            };
+
             InitializeComponent();
             MouseLeftButtonDown += (sender, args) => DragMove();
+            LanguageComboBox.SelectionChanged += LanguageComboBox_SelectionChanged;
 
             LanguageComboBox.ItemsSource = LocalizationService.GetLanguageOptions();
             LanguageComboBox.SelectedValue = currentSettings.Language;
@@ -44,6 +53,19 @@ namespace WindowsNotesApp
             };
         }
 
+        private void LanguageComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (!IsLoaded)
+                return;
+
+            var previewSettings = GetSelectedSettings();
+            LocalizationService.ApplyLanguage(previewSettings.Language);
+            ApplyLocalization();
+
+            if (Owner is MainWindow mainWindow)
+                mainWindow.PreviewSettings(previewSettings);
+        }
+
         private void SaveButton_Click(object sender, RoutedEventArgs e)
         {
             SelectedSettings = GetSelectedSettings();
@@ -52,13 +74,16 @@ namespace WindowsNotesApp
 
         private void CancelButton_Click(object sender, RoutedEventArgs e)
         {
+            if (Owner is MainWindow mainWindow)
+                mainWindow.PreviewSettings(_originalSettings);
             DialogResult = false;
         }
 
         private void CloseButton_Click(object sender, RoutedEventArgs e)
         {
+            if (Owner is MainWindow mainWindow)
+                mainWindow.PreviewSettings(_originalSettings);
             DialogResult = false;
         }
     }
 }
-

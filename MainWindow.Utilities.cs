@@ -1,15 +1,21 @@
-﻿using System.Linq;
-using WindowsNotesApp.Models;
-using WindowsNotesApp.Pages;
-using WindowsNotesApp.Services;
+using System.Linq;
+using Caelum.Models;
+using Caelum.Pages;
+using Caelum.Services;
 
-namespace WindowsNotesApp
+namespace Caelum
 {
     public partial class MainWindow
     {
         private string GetHomeTabTitle()
         {
             return LocalizationService.Get("Main.HomeTabTitle");
+        }
+
+        public void PreviewSettings(AppSettings settings)
+        {
+            LocalizationService.ApplyLanguage(settings.Language);
+            ApplyLocalization();
         }
 
         private void ApplyLocalization()
@@ -28,8 +34,7 @@ namespace WindowsNotesApp
         private void ApplySettings(AppSettings settings)
         {
             var savedSettings = AppSettingsService.Save(settings);
-            LocalizationService.ApplyLanguage(savedSettings.Language);
-            ApplyLocalization();
+            PreviewSettings(savedSettings);
         }
 
         private void RefreshOpenContentLocalization()
@@ -50,7 +55,8 @@ namespace WindowsNotesApp
 
         private void OpenSettingsDialog()
         {
-            var dialog = new SettingsWindow(AppSettingsService.Load())
+            var originalSettings = AppSettingsService.Load();
+            var dialog = new SettingsWindow(originalSettings)
             {
                 Owner = this
             };
@@ -59,7 +65,10 @@ namespace WindowsNotesApp
             {
                 ApplySettings(dialog.SelectedSettings ?? dialog.GetSelectedSettings());
                 ShowToast(LocalizationService.Get("Main.SettingsSaved"), "\uE713");
+                return;
             }
+
+            PreviewSettings(originalSettings);
         }
     }
 }

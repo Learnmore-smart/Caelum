@@ -1,6 +1,6 @@
-﻿using WindowsNotesApp.Services;
+using Caelum.Services;
 
-namespace WindowsNotesApp.Pages
+namespace Caelum.Pages
 {
     public sealed partial class EditorPage
     {
@@ -27,6 +27,16 @@ namespace WindowsNotesApp.Pages
                 UndoButton.ToolTip = LocalizationService.Get("Editor.UndoTooltip");
             if (RedoButton != null)
                 RedoButton.ToolTip = LocalizationService.Get("Editor.RedoTooltip");
+            if (PenToolButton != null)
+                PenToolButton.ToolTip = LocalizationService.Get("Editor.PenTooltip");
+            if (HighlighterToolButton != null)
+                HighlighterToolButton.ToolTip = LocalizationService.Get("Editor.HighlighterTooltip");
+            if (EraserToolButton != null)
+                EraserToolButton.ToolTip = LocalizationService.Get("Editor.EraserTooltip");
+            if (TextToolButton != null)
+                TextToolButton.ToolTip = LocalizationService.Get("Editor.TextTooltip");
+            if (SelectToolButton != null)
+                SelectToolButton.ToolTip = LocalizationService.Get("Editor.SelectTooltip");
             if (SavePdfButton != null)
                 SavePdfButton.ToolTip = LocalizationService.Get("Editor.SaveTooltip");
             if (ZoomOutButton != null)
@@ -35,6 +45,22 @@ namespace WindowsNotesApp.Pages
                 ZoomInButton.ToolTip = LocalizationService.Get("Editor.ZoomInTooltip");
             if (ZoomLabel != null)
                 ZoomLabel.ToolTip = LocalizationService.Get("Editor.ZoomEditTooltip");
+
+            CloseToolPopups();
+            CreateToolPopups();
+        }
+
+        private string GetLocalizedToolName(ToolType tool)
+        {
+            return tool switch
+            {
+                ToolType.Pen => LocalizationService.Get("Editor.ModePen"),
+                ToolType.Highlighter => LocalizationService.Get("Editor.ModeHighlighter"),
+                ToolType.Eraser => LocalizationService.Get("Editor.ModeEraser"),
+                ToolType.Text => LocalizationService.Get("Editor.ModeText"),
+                ToolType.Select => LocalizationService.Get("Editor.ModeSelect"),
+                _ => LocalizationService.Get("Editor.ModeSelect")
+            };
         }
     }
 }

@@ -1,9 +1,9 @@
-﻿using System.Collections.Generic;
+using System.Collections.Generic;
 using System.Globalization;
 using System.Threading;
-using WindowsNotesApp.Models;
+using Caelum.Models;
 
-namespace WindowsNotesApp.Services
+namespace Caelum.Services
 {
     public static class LocalizationService
     {
@@ -18,12 +18,34 @@ namespace WindowsNotesApp.Services
         {
             ["Common.Cancel"] = ("Cancel", "\u53D6\u6D88", "Annuler"),
             ["Common.Error"] = ("Error", "\u9519\u8BEF", "Erreur"),
+            ["Common.OK"] = ("OK", "\u786E\u5B9A", "OK"),
             ["Common.Save"] = ("Save", "\u4FDD\u5B58", "Enregistrer"),
             ["Editor.AutoSaved"] = ("Auto-saved", "\u5DF2\u81EA\u52A8\u4FDD\u5B58", "Enregistr\u00E9 automatiquement"),
             ["Editor.DeleteTooltip"] = ("Delete", "\u5220\u9664", "Supprimer"),
+            ["Editor.EraserTooltip"] = ("Eraser", "\u6A61\u76AE\u64E6", "Gomme"),
+            ["Editor.HighlighterTooltip"] = ("Highlighter", "\u8357\u5149\u7B14", "Surligneur"),
             ["Editor.Loading"] = ("Loading...", "\u52A0\u8F7D\u4E2D...", "Chargement..."),
+            ["Editor.ModeEraser"] = ("Eraser", "\u6A61\u76AE\u64E6", "Gomme"),
+            ["Editor.ModeHighlighter"] = ("Highlighter", "\u8357\u5149\u7B14", "Surligneur"),
+            ["Editor.ModePen"] = ("Pen", "\u753B\u7B14", "Stylo"),
+            ["Editor.ModeSelect"] = ("Select", "\u9009\u62E9", "S\u00E9lection"),
+            ["Editor.ModeText"] = ("Text", "\u6587\u672C", "Texte"),
+            ["Editor.PenTooltip"] = ("Pen", "\u753B\u7B14", "Stylo"),
+            ["Editor.SelectTooltip"] = ("Select and Transform", "\u9009\u62E9\u5E76\u53D8\u6362", "S\u00E9lectionner et transformer"),
+            ["Editor.SelectFilter"] = ("Select", "\u9009\u62E9\u5185\u5BB9", "Filtrer"),
+            ["Editor.SelectFilterBoth"] = ("Both", "\u5168\u90E8", "Tous"),
+            ["Editor.SelectFilterDrawings"] = ("Drawings", "\u56FE\u5F62", "Dessins"),
+            ["Editor.SelectFilterText"] = ("Text", "\u6587\u672C", "Texte"),
+            ["Editor.SelectShape"] = ("Shape", "\u9009\u62E9\u65B9\u5F0F", "Forme"),
+            ["Editor.SelectShapeRect"] = ("Rectangle", "\u77E9\u5F62\u9009\u62E9", "Rectangle"),
+            ["Editor.SelectShapeFree"] = ("Freehand", "\u81EA\u7531\u9009\u62E9", "Main lev\u00E9e"),
+            ["Editor.PopupColor"] = ("Color", "\u989C\u8272", "Couleur"),
+            ["Editor.PopupEraserSize"] = ("Eraser size", "\u6A61\u76AE\u64E6\u5927\u5C0F", "Taille de la gomme"),
+            ["Editor.PopupPreview"] = ("Preview", "\u9884\u89C8", "Aper\u00E7u"),
+            ["Editor.PopupSize"] = ("Size", "\u5927\u5C0F", "Taille"),
             ["Editor.RedoTooltip"] = ("Redo (Ctrl+Y)", "\u91CD\u505A (Ctrl+Y)", "R\u00E9tablir (Ctrl+Y)"),
             ["Editor.SaveTooltip"] = ("Save", "\u4FDD\u5B58", "Enregistrer"),
+            ["Editor.TextTooltip"] = ("Text", "\u6587\u672C", "Texte"),
             ["Editor.UndoTooltip"] = ("Undo (Ctrl+Z)", "\u64A4\u9500 (Ctrl+Z)", "Annuler (Ctrl+Z)"),
             ["Editor.ZoomEditTooltip"] = ("Click to set zoom", "\u70B9\u51FB\u8BBE\u7F6E\u7F29\u653E", "Cliquer pour r\u00E9gler le zoom"),
             ["Editor.ZoomInTooltip"] = ("Zoom in", "\u653E\u5927", "Zoom avant"),
@@ -48,6 +70,8 @@ namespace WindowsNotesApp.Services
             ["Home.RenameFailed"] = ("Failed to rename: {0}", "\u91CD\u547D\u540D\u5931\u8D25\uFF1A{0}", "\u00C9chec du renommage : {0}"),
             ["Home.RenamePrompt"] = ("Enter a new name for this file:", "\u8F93\u5165\u6587\u4EF6\u7684\u65B0\u540D\u79F0\uFF1A", "Saisissez un nouveau nom pour ce fichier :"),
             ["Home.RenameTitle"] = ("Rename File", "\u91CD\u547D\u540D\u6587\u4EF6", "Renommer le fichier"),
+            ["Home.Subtitle"] = ("Open a PDF or continue where you left off.", "\u6253\u5F00 PDF \u6216\u7EE7\u7EED\u4E0A\u6B21\u7684\u8FDB\u5EA6\u3002", "Ouvrez un PDF ou reprenez l\u00E0 o\u00F9 vous vous \u00EAtiez arr\u00EAt\u00E9."),
+            ["Home.Title"] = ("Recent PDFs", "\u6700\u8FD1\u7684 PDF", "PDF r\u00E9cents"),
             ["Main.About"] = ("About", "\u5173\u4E8E", "\u00C0 propos"),
             ["Main.AboutMessage"] = ("Caelum\nThe Modern Digital Ink Notetaker for Windows", "Caelum\n\u9762\u5411 Windows \u7684\u73B0\u4EE3\u6570\u5B57\u58A8\u8FF9\u7B14\u8BB0\u5DE5\u5177", "Caelum\nLe carnet d'encre num\u00E9rique moderne pour Windows"),
             ["Main.AboutTitle"] = ("About", "\u5173\u4E8E", "\u00C0 propos"),
@@ -63,7 +87,7 @@ namespace WindowsNotesApp.Services
             ["Main.SettingsSaved"] = ("Settings saved", "\u8BBE\u7F6E\u5DF2\u4FDD\u5B58", "Param\u00E8tres enregistr\u00E9s"),
             ["Main.SortByDate"] = ("Sort by date", "\u6309\u65E5\u671F\u6392\u5E8F", "Trier par date"),
             ["Main.SortByName"] = ("Sort by name", "\u6309\u540D\u79F0\u6392\u5E8F", "Trier par nom"),
-            ["Settings.LanguageHint"] = ("Choose the interface language for Caelum. Changes apply immediately.", "\u9009\u62E9 Caelum \u7684\u754C\u9762\u8BED\u8A00\u3002\u4FDD\u5B58\u540E\u4F1A\u7ACB\u5373\u751F\u6548\u3002", "Choisissez la langue de l'interface de Caelum. Les changements s'appliquent imm\u00E9diatement."),
+            ["Settings.LanguageHint"] = ("Choose the interface language for Caelum. Changes preview immediately.", "\u9009\u62E9 Caelum \u7684\u754C\u9762\u8BED\u8A00\u3002\u66F4\u6539\u4F1A\u7ACB\u5373\u9884\u89C8\u3002", "Choisissez la langue de l'interface de Caelum. Les changements sont pr\u00E9visualis\u00E9s imm\u00E9diatement."),
             ["Settings.LanguageLabel"] = ("Display language", "\u663E\u793A\u8BED\u8A00", "Langue d'affichage"),
             ["Settings.Subtitle"] = ("Customize utilities and language.", "\u8C03\u6574\u5DE5\u5177\u529F\u80FD\u4E0E\u8BED\u8A00\u3002", "Personnalisez les utilitaires et la langue."),
             ["Settings.Title"] = ("Settings", "\u8BBE\u7F6E", "Param\u00E8tres"),

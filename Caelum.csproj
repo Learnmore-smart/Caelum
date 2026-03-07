@@ -3,17 +3,17 @@
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net8.0-windows</TargetFramework>
-    <RootNamespace>WindowsNotesApp</RootNamespace>
+    <RootNamespace>Caelum</RootNamespace>
     <UseWPF>true</UseWPF>
     <UseWindowsForms>true</UseWindowsForms>
     <Nullable>disable</Nullable>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <AssemblyName>WindowsNotesApp</AssemblyName>
+    <AssemblyName>Caelum</AssemblyName>
     <ApplicationIcon>Assets\app-icon.ico</ApplicationIcon>
-    <Version>2.0.0</Version>
-    <AssemblyVersion>2.0.0.0</AssemblyVersion>
-    <FileVersion>2.0.0.0</FileVersion>
-    <InformationalVersion>2.0.0</InformationalVersion>
+    <Version>2.1.0</Version>
+    <AssemblyVersion>2.1.0.0</AssemblyVersion>
+    <FileVersion>2.1.0.0</FileVersion>
+    <InformationalVersion>2.1.0</InformationalVersion>
     <Authors>Learnmore_smart</Authors>
     <Company>Learnmore_smart</Company>
     <Product>Caelum</Product>
@@ -30,6 +30,13 @@
     <PackageReference Include="PdfiumViewer.Native.x86_64.v8-xfa" Version="2018.4.8.256" />
     <PackageReference Include="PdfSharpCore" Version="1.3.67" />
     <PackageReference Include="System.Drawing.Common" Version="8.0.8" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Remove="Caelum.Tests\**" />
+    <EmbeddedResource Remove="Caelum.Tests\**" />
+    <None Remove="Caelum.Tests\**" />
+    <Page Remove="Caelum.Tests\**" />
   </ItemGroup>
 
   <ItemGroup>

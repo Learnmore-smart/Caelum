@@ -1,6 +1,6 @@
 using System.Collections.Generic;
 
-namespace WindowsNotesApp.Models
+namespace Caelum.Models
 {
     public class AnnotationData
     {

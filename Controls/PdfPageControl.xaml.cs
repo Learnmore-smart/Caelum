@@ -7,12 +7,69 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Ink;
-using WindowsNotesApp.Models;
-using WindowsNotesApp.Services;
+using Caelum.Models;
+using Caelum.Services;
 
-namespace WindowsNotesApp.Controls
+namespace Caelum.Controls
 {
     public enum CustomInkInputProcessingMode { None, Inking, Erasing }
+
+    public enum SelectionFilter { Both, DrawingsOnly, TextOnly }
+    public enum SelectionShape { Rectangle, FreeForm }
+
+    public sealed class SelectionMoveCompletedEventArgs : EventArgs
+    {
+        public SelectionMoveCompletedEventArgs(double deltaX, double deltaY, List<System.Windows.Ink.Stroke> strokes, List<System.Windows.Controls.Grid> containers)
+        {
+            DeltaX = deltaX;
+            DeltaY = deltaY;
+            SelectedStrokes = strokes;
+            SelectedTextContainers = containers;
+        }
+        public double DeltaX { get; }
+        public double DeltaY { get; }
+        public List<System.Windows.Ink.Stroke> SelectedStrokes { get; }
+        public List<System.Windows.Controls.Grid> SelectedTextContainers { get; }
+    }
+
+    public sealed class SelectionResizeCompletedEventArgs : EventArgs
+    {
+        public SelectionResizeCompletedEventArgs(double totalScale, Point anchor, List<System.Windows.Ink.Stroke> strokes, List<System.Windows.Controls.Grid> containers)
+        {
+            TotalScale = totalScale;
+            Anchor = anchor;
+            SelectedStrokes = strokes;
+            SelectedTextContainers = containers;
+        }
+        public double TotalScale { get; }
+        public Point Anchor { get; }
+        public List<System.Windows.Ink.Stroke> SelectedStrokes { get; }
+        public List<System.Windows.Controls.Grid> SelectedTextContainers { get; }
+    }
+
+    public sealed class PdfTextSelectionPointerEventArgs : EventArgs
+    {
+        public PdfTextSelectionPointerEventArgs(Point position, MouseButtonState leftButton)
+        {
+            Position = position;
+            LeftButton = leftButton;
+        }
+
+        public Point Position { get; }
+        public MouseButtonState LeftButton { get; }
+    }
+
+    public sealed class AnnotationSelectionChangedEventArgs : EventArgs
+    {
+        public AnnotationSelectionChangedEventArgs(bool hasSelection, Rect bounds)
+        {
+            HasSelection = hasSelection;
+            Bounds = bounds;
+        }
+
+        public bool HasSelection { get; }
+        public Rect Bounds { get; }
+    }
 
     public sealed partial class PdfPageControl : UserControl
     {
@@ -31,20 +88,47 @@ namespace WindowsNotesApp.Controls
 
         public event EventHandler<MouseButtonEventArgs> TextOverlayPointerPressed;
         public event EventHandler<MouseButtonEventArgs> BackgroundPointerPressed;
+        public event EventHandler<PdfTextSelectionPointerEventArgs> PdfTextSelectionPointerPressed;
+        public event EventHandler<PdfTextSelectionPointerEventArgs> PdfTextSelectionPointerMoved;
+        public event EventHandler<PdfTextSelectionPointerEventArgs> PdfTextSelectionPointerReleased;
         public event EventHandler InkMutated;
         public event EventHandler<Stroke> StrokeCollectedUndoable;
         public event EventHandler<CustomInkInputProcessingMode> ModeChanged;
+        public event EventHandler<AnnotationSelectionChangedEventArgs> SelectionChanged;
+        public event EventHandler<SelectionMoveCompletedEventArgs> SelectionMoveCompleted;
+        public event EventHandler<SelectionResizeCompletedEventArgs> SelectionResizeCompleted;
 
         private DrawingAttributes _drawingAttributes;
         private CustomInkInputProcessingMode _currentMode = CustomInkInputProcessingMode.None;
         private double _eraserSize = 20;
         private bool _isErasing;
         private StylusPointCollection _erasePoints;
+        private bool _isPdfTextSelectionEnabled;
 
+        // Selection transform state
+        private bool _isSelectionMode;
+        private SelectionFilter _selectionFilter = SelectionFilter.Both;
+        private SelectionShape _selectionShape = SelectionShape.Rectangle;
+        private bool _isSelecting;
+        private Point _selectionStartPoint;
+        private System.Windows.Shapes.Rectangle _selectionRect;
+        private System.Windows.Shapes.Polyline _freeSelectionPath;
+        private System.Windows.Media.PointCollection _freeSelectionPoints;
+        private List<Stroke> _selectedStrokes = new List<Stroke>();
+        private List<Grid> _selectedTextContainers = new List<Grid>();
+        private bool _isDraggingSelection;
+        private Point _dragStartPoint;
+        private double _totalDragDeltaX;
+        private double _totalDragDeltaY;
+        private bool _isResizingSelection;
+        private int _resizeHandleIndex; // 0=TL, 1=TR, 2=BL, 3=BR
+        private Point _resizeAnchorPoint;
+        private double _resizeStartHandleDist;
+        private double _lastResizeScale;
         // Tracks whether the stylus is currently inverted (physical eraser end),
         // which corresponds to Windows Ink's IsEraser / PointerPointProperties.IsEraser.
         // When inverted, we override the current mode to erase regardless of the
-        // selected tool â€?this is how standard Windows Ink pens work and is the
+        // selected tool ï¿½?this is how standard Windows Ink pens work and is the
         // signal path used by Huawei M-Pencil when MateBook-E-Pen is active.
         private bool _isStylusInverted;
 
@@ -87,6 +171,7 @@ namespace WindowsNotesApp.Controls
             InkCanvas.StrokeErased += InkCanvas_StrokeErased;
 
             TextOverlayCanvas.IsHitTestVisible = false;
+            PdfTextSelectionCanvas.IsHitTestVisible = false;
             InkCanvas.IsHitTestVisible = true;
 
             Loaded += PdfPageControl_Loaded;
@@ -141,6 +226,12 @@ namespace WindowsNotesApp.Controls
         private void PdfPageControl_Loaded(object sender, RoutedEventArgs e)
         {
             TextOverlayCanvas.MouseDown += TextOverlayCanvas_MouseDown;
+            PdfTextSelectionCanvas.MouseLeftButtonDown += PdfTextSelectionCanvas_MouseLeftButtonDown;
+            PdfTextSelectionCanvas.MouseMove += PdfTextSelectionCanvas_MouseMove;
+            PdfTextSelectionCanvas.MouseLeftButtonUp += PdfTextSelectionCanvas_MouseLeftButtonUp;
+            PdfTextSelectionCanvas.StylusDown += PdfTextSelectionCanvas_StylusDown;
+            PdfTextSelectionCanvas.StylusMove += PdfTextSelectionCanvas_StylusMove;
+            PdfTextSelectionCanvas.StylusUp += PdfTextSelectionCanvas_StylusUp;
             PageGrid.MouseDown += PageGrid_MouseDown;
             InkCanvas.MouseMove += InkCanvas_MouseMove;
             InkCanvas.MouseUp += InkCanvas_MouseUp;
@@ -152,6 +243,12 @@ namespace WindowsNotesApp.Controls
             InkCanvas.StylusButtonUp += InkCanvas_StylusButtonUp;
             InkCanvas.MouseEnter += InkCanvas_MouseEnter;
             InkCanvas.MouseLeave += InkCanvas_MouseLeave;
+            SelectionOverlayCanvas.MouseLeftButtonDown += SelectionOverlayCanvas_MouseLeftButtonDown;
+            SelectionOverlayCanvas.MouseMove += SelectionOverlayCanvas_MouseMove;
+            SelectionOverlayCanvas.MouseLeftButtonUp += SelectionOverlayCanvas_MouseLeftButtonUp;
+            SelectionOverlayCanvas.StylusDown += SelectionOverlayCanvas_StylusDown;
+            SelectionOverlayCanvas.StylusMove += SelectionOverlayCanvas_StylusMove;
+            SelectionOverlayCanvas.StylusUp += SelectionOverlayCanvas_StylusUp;
 
             // Fix for auto-scroll bug: Prevent ScrollViewer from scrolling when InkCanvas gets focus
             this.RequestBringIntoView += PdfPageControl_RequestBringIntoView;
@@ -160,6 +257,12 @@ namespace WindowsNotesApp.Controls
         private void PdfPageControl_Unloaded(object sender, RoutedEventArgs e)
         {
             TextOverlayCanvas.MouseDown -= TextOverlayCanvas_MouseDown;
+            PdfTextSelectionCanvas.MouseLeftButtonDown -= PdfTextSelectionCanvas_MouseLeftButtonDown;
+            PdfTextSelectionCanvas.MouseMove -= PdfTextSelectionCanvas_MouseMove;
+            PdfTextSelectionCanvas.MouseLeftButtonUp -= PdfTextSelectionCanvas_MouseLeftButtonUp;
+            PdfTextSelectionCanvas.StylusDown -= PdfTextSelectionCanvas_StylusDown;
+            PdfTextSelectionCanvas.StylusMove -= PdfTextSelectionCanvas_StylusMove;
+            PdfTextSelectionCanvas.StylusUp -= PdfTextSelectionCanvas_StylusUp;
             PageGrid.MouseDown -= PageGrid_MouseDown;
             InkCanvas.MouseMove -= InkCanvas_MouseMove;
             InkCanvas.MouseUp -= InkCanvas_MouseUp;
@@ -171,6 +274,12 @@ namespace WindowsNotesApp.Controls
             InkCanvas.StylusButtonUp -= InkCanvas_StylusButtonUp;
             InkCanvas.MouseEnter -= InkCanvas_MouseEnter;
             InkCanvas.MouseLeave -= InkCanvas_MouseLeave;
+            SelectionOverlayCanvas.MouseLeftButtonDown -= SelectionOverlayCanvas_MouseLeftButtonDown;
+            SelectionOverlayCanvas.MouseMove -= SelectionOverlayCanvas_MouseMove;
+            SelectionOverlayCanvas.MouseLeftButtonUp -= SelectionOverlayCanvas_MouseLeftButtonUp;
+            SelectionOverlayCanvas.StylusDown -= SelectionOverlayCanvas_StylusDown;
+            SelectionOverlayCanvas.StylusMove -= SelectionOverlayCanvas_StylusMove;
+            SelectionOverlayCanvas.StylusUp -= SelectionOverlayCanvas_StylusUp;
 
             this.RequestBringIntoView -= PdfPageControl_RequestBringIntoView;
         }
@@ -216,7 +325,7 @@ namespace WindowsNotesApp.Controls
             {
                 _isStylusInverted = inverted;
                 Console.WriteLine(
-                    $"[PdfPageControl] Stylus Inverted changed â†?{inverted} (device={e.StylusDevice?.Name})");
+                    $"[PdfPageControl] Stylus Inverted changed ï¿½?{inverted} (device={e.StylusDevice?.Name})");
 
                 if (inverted)
                 {
@@ -227,7 +336,7 @@ namespace WindowsNotesApp.Controls
                 }
                 else if (_currentMode != CustomInkInputProcessingMode.Erasing)
                 {
-                    // Pen flipped back to normal â€?restore previous mode
+                    // Pen flipped back to normal ï¿½?restore previous mode
                     EraserIndicator.Visibility = Visibility.Collapsed;
                     SetInputMode(_currentMode);
                 }
@@ -254,6 +363,68 @@ namespace WindowsNotesApp.Controls
             }
         }
 
+        private void PdfTextSelectionCanvas_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            if (!_isPdfTextSelectionEnabled)
+                return;
+
+            PdfTextSelectionCanvas.CaptureMouse();
+            PdfTextSelectionPointerPressed?.Invoke(this, new PdfTextSelectionPointerEventArgs(e.GetPosition(PageGrid), e.LeftButton));
+            e.Handled = true;
+        }
+
+        private void PdfTextSelectionCanvas_MouseMove(object sender, MouseEventArgs e)
+        {
+            if (!_isPdfTextSelectionEnabled)
+                return;
+
+            PdfTextSelectionPointerMoved?.Invoke(this, new PdfTextSelectionPointerEventArgs(e.GetPosition(PageGrid), e.LeftButton));
+            if (PdfTextSelectionCanvas.IsMouseCaptured)
+                e.Handled = true;
+        }
+
+        private void PdfTextSelectionCanvas_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+        {
+            if (!_isPdfTextSelectionEnabled)
+                return;
+
+            PdfTextSelectionPointerReleased?.Invoke(this, new PdfTextSelectionPointerEventArgs(e.GetPosition(PageGrid), e.LeftButton));
+            if (PdfTextSelectionCanvas.IsMouseCaptured)
+                PdfTextSelectionCanvas.ReleaseMouseCapture();
+            e.Handled = true;
+        }
+
+        private void PdfTextSelectionCanvas_StylusDown(object sender, StylusDownEventArgs e)
+        {
+            if (!_isPdfTextSelectionEnabled)
+                return;
+
+            PdfTextSelectionCanvas.CaptureStylus();
+            PdfTextSelectionPointerPressed?.Invoke(this, new PdfTextSelectionPointerEventArgs(e.GetPosition(PageGrid), MouseButtonState.Pressed));
+            e.Handled = true;
+        }
+
+        private void PdfTextSelectionCanvas_StylusMove(object sender, StylusEventArgs e)
+        {
+            if (!_isPdfTextSelectionEnabled)
+                return;
+
+            PdfTextSelectionPointerMoved?.Invoke(this, new PdfTextSelectionPointerEventArgs(e.GetPosition(PageGrid), MouseButtonState.Pressed));
+            if (PdfTextSelectionCanvas.IsStylusCaptured)
+                e.Handled = true;
+        }
+
+        private void PdfTextSelectionCanvas_StylusUp(object sender, StylusEventArgs e)
+        {
+            if (!_isPdfTextSelectionEnabled)
+                return;
+
+            PdfTextSelectionPointerReleased?.Invoke(this, new PdfTextSelectionPointerEventArgs(e.GetPosition(PageGrid), MouseButtonState.Released));
+            if (PdfTextSelectionCanvas.IsStylusCaptured)
+                PdfTextSelectionCanvas.ReleaseStylusCapture();
+            e.Handled = true;
+        }
+
         private bool _isBarrelButtonPressed = false;
         private DateTime _lastBarrelButtonDownTime = DateTime.MinValue;
         private CustomInkInputProcessingMode _previousMode = CustomInkInputProcessingMode.Inking;
@@ -271,7 +442,7 @@ namespace WindowsNotesApp.Controls
         {
             Console.WriteLine($"[PdfPageControl] StylusButtonDown: name={e.StylusButton.Name}, GUID={e.StylusButton.Guid}, device={e.StylusDevice?.Name}");
 
-            // Ignore the tip button â€?it fires on every pen contact and is NOT a side button.
+            // Ignore the tip button ï¿½?it fires on every pen contact and is NOT a side button.
             if (e.StylusButton.Guid == StylusPointProperties.TipButton.Id)
                 return;
 
@@ -547,7 +718,59 @@ namespace WindowsNotesApp.Controls
         public void SetMode(bool isTextMode)
         {
             TextOverlayCanvas.IsHitTestVisible = isTextMode;
-            InkCanvas.IsHitTestVisible = !isTextMode;
+        }
+
+        public void SetPdfTextSelectionEnabled(bool enabled)
+        {
+            _isPdfTextSelectionEnabled = enabled;
+            PdfTextSelectionCanvas.Visibility = enabled ? Visibility.Visible : Visibility.Collapsed;
+            PdfTextSelectionCanvas.IsHitTestVisible = enabled;
+
+            if (!enabled)
+            {
+                if (PdfTextSelectionCanvas.IsMouseCaptured)
+                    PdfTextSelectionCanvas.ReleaseMouseCapture();
+                if (PdfTextSelectionCanvas.IsStylusCaptured)
+                    PdfTextSelectionCanvas.ReleaseStylusCapture();
+                ClearPdfTextSelection();
+                return;
+            }
+
+            // When PDF text selection is enabled, we need InkCanvas to NOT intercept events
+            InkCanvas.IsHitTestVisible = false;
+            Cursor = Cursors.IBeam;
+        }
+
+        public void SetPdfTextSelectionRects(IEnumerable<Rect> rects)
+        {
+            PdfTextSelectionCanvas.Children.Clear();
+            if (rects == null)
+                return;
+
+            foreach (var rect in rects)
+            {
+                if (rect.IsEmpty || rect.Width <= 0 || rect.Height <= 0)
+                    continue;
+
+                var highlight = new System.Windows.Shapes.Rectangle
+                {
+                    Width = rect.Width,
+                    Height = rect.Height,
+                    RadiusX = 2,
+                    RadiusY = 2,
+                    Fill = new SolidColorBrush(Color.FromArgb(80, 0, 120, 212)),
+                    IsHitTestVisible = false
+                };
+
+                Canvas.SetLeft(highlight, rect.X);
+                Canvas.SetTop(highlight, rect.Y);
+                PdfTextSelectionCanvas.Children.Add(highlight);
+            }
+        }
+
+        public void ClearPdfTextSelection()
+        {
+            PdfTextSelectionCanvas.Children.Clear();
         }
 
         public DrawingAttributes CopyDefaultDrawingAttributes()
@@ -571,19 +794,24 @@ namespace WindowsNotesApp.Controls
             switch (mode)
             {
                 case CustomInkInputProcessingMode.Inking:
-                    InkCanvas.IsHitTestVisible = true;
+                    if (!_isPdfTextSelectionEnabled)
+                        InkCanvas.IsHitTestVisible = true;
                     InkCanvas.EditingMode = InkCanvasEditingMode.Ink;
                     EraserIndicator.Visibility = Visibility.Collapsed;
                     InkCanvas.Cursor = Cursors.Cross;
                     Cursor = Cursors.Arrow;
                     break;
                 case CustomInkInputProcessingMode.Erasing:
-                    InkCanvas.IsHitTestVisible = true;
+                    if (!_isPdfTextSelectionEnabled)
+                        InkCanvas.IsHitTestVisible = true;
                     InkCanvas.EditingMode = InkCanvasEditingMode.None;
                     InkCanvas.Cursor = Cursors.None;
                     break;
                 case CustomInkInputProcessingMode.None:
-                    InkCanvas.IsHitTestVisible = false; // Allow events to pass through for scrolling
+                    if (!_isPdfTextSelectionEnabled)
+                        InkCanvas.IsHitTestVisible = false; // Allow events to pass through for scrolling
+                    else
+                        InkCanvas.IsHitTestVisible = false; // Keep it false for text selection
                     InkCanvas.EditingMode = InkCanvasEditingMode.None;
                     EraserIndicator.Visibility = Visibility.Collapsed;
                     InkCanvas.Cursor = Cursors.Arrow;
@@ -681,6 +909,584 @@ namespace WindowsNotesApp.Controls
         public void AddStrokeQuiet(Stroke stroke)
         {
             InkCanvas.Strokes.Add(stroke);
+        }
+
+        public void SetSelectionMode(bool enabled)
+        {
+            _isSelectionMode = enabled;
+            SelectionOverlayCanvas.Visibility = enabled ? Visibility.Visible : Visibility.Collapsed;
+            SelectionOverlayCanvas.IsHitTestVisible = enabled;
+
+            if (!enabled)
+            {
+                ClearSelection();
+                if (SelectionOverlayCanvas.IsMouseCaptured)
+                    SelectionOverlayCanvas.ReleaseMouseCapture();
+                if (SelectionOverlayCanvas.IsStylusCaptured)
+                    SelectionOverlayCanvas.ReleaseStylusCapture();
+            }
+            else
+            {
+                InkCanvas.IsHitTestVisible = false;
+                Cursor = Cursors.Cross;
+            }
+        }
+
+        public void SetSelectionFilter(SelectionFilter filter)
+        {
+            _selectionFilter = filter;
+        }
+
+        public void SetSelectionShape(SelectionShape shape)
+        {
+            _selectionShape = shape;
+        }
+
+        public void ClearSelection()
+        {
+            _selectedStrokes.Clear();
+            _selectedTextContainers.Clear();
+            _isSelecting = false;
+            _isDraggingSelection = false;
+            _isResizingSelection = false;
+            _lastResizeScale = 1.0;
+            _totalDragDeltaX = 0;
+            _totalDragDeltaY = 0;
+            _freeSelectionPath = null;
+            _freeSelectionPoints = null;
+            SelectionOverlayCanvas.Children.Clear();
+            _selectionRect = null;
+            SelectionChanged?.Invoke(this, new AnnotationSelectionChangedEventArgs(false, Rect.Empty));
+        }
+
+        public void MoveSelection(double deltaX, double deltaY)
+        {
+            if (_selectedStrokes.Count == 0 && _selectedTextContainers.Count == 0)
+                return;
+
+            MoveItemsDirectly(_selectedStrokes, _selectedTextContainers, deltaX, deltaY);
+        }
+
+        public void MoveItemsDirectly(List<Stroke> strokes, List<Grid> containers, double deltaX, double deltaY)
+        {
+            if (strokes.Count == 0 && containers.Count == 0)
+                return;
+
+            foreach (var stroke in strokes)
+            {
+                var newPoints = new StylusPointCollection();
+                foreach (var pt in stroke.StylusPoints)
+                {
+                    newPoints.Add(new StylusPoint(pt.X + deltaX, pt.Y + deltaY));
+                }
+                stroke.StylusPoints = newPoints;
+            }
+
+            foreach (var container in containers)
+            {
+                var left = Canvas.GetLeft(container);
+                var top = Canvas.GetTop(container);
+                Canvas.SetLeft(container, left + deltaX);
+                Canvas.SetTop(container, top + deltaY);
+            }
+
+            UpdateSelectionVisuals();
+            InkMutated?.Invoke(this, EventArgs.Empty);
+        }
+
+        public void ScaleSelection(double scaleFactor, Point center)
+        {
+            if (_selectedStrokes.Count == 0 && _selectedTextContainers.Count == 0)
+                return;
+
+            ScaleItemsDirectly(_selectedStrokes, _selectedTextContainers, scaleFactor, center);
+        }
+
+        public void ScaleItemsDirectly(List<Stroke> strokes, List<Grid> containers, double scaleFactor, Point center)
+        {
+            if (strokes.Count == 0 && containers.Count == 0)
+                return;
+
+            foreach (var stroke in strokes)
+            {
+                var newPoints = new StylusPointCollection();
+                foreach (var pt in stroke.StylusPoints)
+                {
+                    var newX = center.X + (pt.X - center.X) * scaleFactor;
+                    var newY = center.Y + (pt.Y - center.Y) * scaleFactor;
+                    newPoints.Add(new StylusPoint(newX, newY));
+                }
+                stroke.StylusPoints = newPoints;
+
+                stroke.DrawingAttributes.Width *= scaleFactor;
+                stroke.DrawingAttributes.Height *= scaleFactor;
+            }
+
+            foreach (var container in containers)
+            {
+                var left = Canvas.GetLeft(container);
+                var top = Canvas.GetTop(container);
+                var newLeft = center.X + (left - center.X) * scaleFactor;
+                var newTop = center.Y + (top - center.Y) * scaleFactor;
+                Canvas.SetLeft(container, newLeft);
+                Canvas.SetTop(container, newTop);
+
+                var tb = container.Children.OfType<TextBox>().FirstOrDefault();
+                if (tb != null)
+                {
+                    tb.FontSize *= scaleFactor;
+                }
+            }
+
+            UpdateSelectionVisuals();
+            InkMutated?.Invoke(this, EventArgs.Empty);
+        }
+
+        public Rect GetSelectionBounds()
+        {
+            if (_selectedStrokes.Count == 0 && _selectedTextContainers.Count == 0)
+                return Rect.Empty;
+
+            var bounds = Rect.Empty;
+
+            foreach (var stroke in _selectedStrokes)
+            {
+                var strokeBounds = stroke.GetBounds();
+                if (bounds.IsEmpty)
+                    bounds = strokeBounds;
+                else
+                    bounds.Union(strokeBounds);
+            }
+
+            foreach (var container in _selectedTextContainers)
+            {
+                var left = Canvas.GetLeft(container);
+                var top = Canvas.GetTop(container);
+                var rect = new Rect(left, top, container.ActualWidth, container.ActualHeight);
+                if (bounds.IsEmpty)
+                    bounds = rect;
+                else
+                    bounds.Union(rect);
+            }
+
+            return bounds;
+        }
+
+        public bool HasSelection => _selectedStrokes.Count > 0 || _selectedTextContainers.Count > 0;
+
+        private void UpdateSelectionVisuals()
+        {
+            var bounds = GetSelectionBounds();
+            if (bounds.IsEmpty)
+                return;
+
+            SelectionOverlayCanvas.Children.Clear();
+
+            var selectionBorder = new System.Windows.Shapes.Rectangle
+            {
+                Width = bounds.Width + 8,
+                Height = bounds.Height + 8,
+                Stroke = new SolidColorBrush(Color.FromRgb(0, 120, 212)),
+                StrokeThickness = 1.5,
+                StrokeDashArray = new DoubleCollection { 4, 2 },
+                Fill = new SolidColorBrush(Color.FromArgb(20, 0, 120, 212)),
+                Cursor = Cursors.SizeAll
+            };
+            Canvas.SetLeft(selectionBorder, bounds.Left - 4);
+            Canvas.SetTop(selectionBorder, bounds.Top - 4);
+            SelectionOverlayCanvas.Children.Add(selectionBorder);
+
+            var handles = new[] {
+                new Point(bounds.Left - 4, bounds.Top - 4),    // 0: TL
+                new Point(bounds.Right + 4, bounds.Top - 4),   // 1: TR
+                new Point(bounds.Left - 4, bounds.Bottom + 4), // 2: BL
+                new Point(bounds.Right + 4, bounds.Bottom + 4) // 3: BR
+            };
+
+            var handleCursors = new[] {
+                Cursors.SizeNWSE,  // TL
+                Cursors.SizeNESW,  // TR
+                Cursors.SizeNESW,  // BL
+                Cursors.SizeNWSE,  // BR
+            };
+
+            for (int i = 0; i < handles.Length; i++)
+            {
+                var handlePos = handles[i];
+                var handle = new System.Windows.Shapes.Rectangle
+                {
+                    Width = 10,
+                    Height = 10,
+                    Fill = Brushes.White,
+                    Stroke = new SolidColorBrush(Color.FromRgb(0, 120, 212)),
+                    StrokeThickness = 1.5,
+                    Cursor = handleCursors[i]
+                };
+                Canvas.SetLeft(handle, handlePos.X - 5);
+                Canvas.SetTop(handle, handlePos.Y - 5);
+                SelectionOverlayCanvas.Children.Add(handle);
+            }
+
+            SelectionChanged?.Invoke(this, new AnnotationSelectionChangedEventArgs(true, bounds));
+        }
+
+        private static Point GetOppositeCorner(Rect bounds, int handleIndex)
+        {
+            return handleIndex switch
+            {
+                0 => new Point(bounds.Right, bounds.Bottom),  // TL â†’ BR
+                1 => new Point(bounds.Left, bounds.Bottom),   // TR â†’ BL
+                2 => new Point(bounds.Right, bounds.Top),     // BL â†’ TR
+                3 => new Point(bounds.Left, bounds.Top),      // BR â†’ TL
+                _ => new Point(bounds.Left + bounds.Width / 2, bounds.Top + bounds.Height / 2)
+            };
+        }
+
+        private static double PointDistance(Point a, Point b)
+        {
+            var dx = a.X - b.X;
+            var dy = a.Y - b.Y;
+            return Math.Sqrt(dx * dx + dy * dy);
+        }
+
+        private static Cursor GetResizeCursor(int handleIndex)
+        {
+            return handleIndex switch
+            {
+                0 => Cursors.SizeNWSE,  // TL
+                1 => Cursors.SizeNESW,  // TR
+                2 => Cursors.SizeNESW,  // BL
+                3 => Cursors.SizeNWSE,  // BR
+                _ => Cursors.SizeAll
+            };
+        }
+
+        private void SelectionOverlayCanvas_MouseLeftButtonDownCore(Point point)
+        {
+            if (!_isSelectionMode) return;
+
+            if (HasSelection)
+            {
+                var bounds = GetSelectionBounds();
+
+                // Check corner handles first (resize)
+                var cornerHandles = new[] {
+                    new Point(bounds.Left - 4, bounds.Top - 4),    // 0: TL
+                    new Point(bounds.Right + 4, bounds.Top - 4),   // 1: TR
+                    new Point(bounds.Left - 4, bounds.Bottom + 4), // 2: BL
+                    new Point(bounds.Right + 4, bounds.Bottom + 4) // 3: BR
+                };
+                for (int i = 0; i < cornerHandles.Length; i++)
+                {
+                    var hitRect = new Rect(cornerHandles[i].X - 8, cornerHandles[i].Y - 8, 16, 16);
+                    if (hitRect.Contains(point))
+                    {
+                        _isResizingSelection = true;
+                        _resizeHandleIndex = i;
+                        _resizeAnchorPoint = GetOppositeCorner(bounds, i);
+                        _resizeStartHandleDist = PointDistance(cornerHandles[i], _resizeAnchorPoint);
+                        if (_resizeStartHandleDist < 1.0) _resizeStartHandleDist = 1.0;
+                        _lastResizeScale = 1.0;
+                        SelectionOverlayCanvas.CaptureMouse();
+                        return;
+                    }
+                }
+
+                var inflatedBounds = bounds;
+                inflatedBounds.Inflate(8, 8);
+
+                if (inflatedBounds.Contains(point))
+                {
+                    _isDraggingSelection = true;
+                    _dragStartPoint = point;
+                    _totalDragDeltaX = 0;
+                    _totalDragDeltaY = 0;
+                    SelectionOverlayCanvas.CaptureMouse();
+                    return;
+                }
+            }
+
+            ClearSelection();
+            _isSelecting = true;
+            _selectionStartPoint = point;
+            SelectionOverlayCanvas.CaptureMouse();
+
+            if (_selectionShape == SelectionShape.FreeForm)
+            {
+                _freeSelectionPoints = new System.Windows.Media.PointCollection { point };
+                _freeSelectionPath = new System.Windows.Shapes.Polyline
+                {
+                    Stroke = new SolidColorBrush(Color.FromRgb(0, 120, 212)),
+                    StrokeThickness = 1.5,
+                    StrokeDashArray = new DoubleCollection { 4, 2 },
+                    Points = _freeSelectionPoints
+                };
+                SelectionOverlayCanvas.Children.Add(_freeSelectionPath);
+            }
+            else
+            {
+                _selectionRect = new System.Windows.Shapes.Rectangle
+                {
+                    Stroke = new SolidColorBrush(Color.FromRgb(0, 120, 212)),
+                    StrokeThickness = 1,
+                    StrokeDashArray = new DoubleCollection { 4, 2 },
+                    Fill = new SolidColorBrush(Color.FromArgb(30, 0, 120, 212))
+                };
+                Canvas.SetLeft(_selectionRect, point.X);
+                Canvas.SetTop(_selectionRect, point.Y);
+                SelectionOverlayCanvas.Children.Add(_selectionRect);
+            }
+        }
+
+        private void SelectionOverlayCanvas_MouseMoveCore(Point point)
+        {
+            if (!_isSelectionMode) return;
+
+            if (_isResizingSelection)
+            {
+                var dist = PointDistance(_resizeAnchorPoint, point);
+                if (dist < 1.0) dist = 1.0;
+                var totalScale = dist / _resizeStartHandleDist;
+                if (totalScale < 0.01) totalScale = 0.01;
+                var deltaScale = totalScale / _lastResizeScale;
+                _lastResizeScale = totalScale;
+                ScaleSelection(deltaScale, _resizeAnchorPoint);
+                Cursor = GetResizeCursor(_resizeHandleIndex);
+            }
+            else if (_isDraggingSelection)
+            {
+                var deltaX = point.X - _dragStartPoint.X;
+                var deltaY = point.Y - _dragStartPoint.Y;
+                _totalDragDeltaX += deltaX;
+                _totalDragDeltaY += deltaY;
+                MoveSelection(deltaX, deltaY);
+                _dragStartPoint = point;
+                Cursor = Cursors.SizeAll;
+            }
+            else if (_isSelecting)
+            {
+                if (_selectionShape == SelectionShape.FreeForm && _freeSelectionPath != null)
+                {
+                    _freeSelectionPoints.Add(point);
+                }
+                else if (_selectionRect != null)
+                {
+                    var x = Math.Min(_selectionStartPoint.X, point.X);
+                    var y = Math.Min(_selectionStartPoint.Y, point.Y);
+                    var width = Math.Abs(point.X - _selectionStartPoint.X);
+                    var height = Math.Abs(point.Y - _selectionStartPoint.Y);
+
+                    Canvas.SetLeft(_selectionRect, x);
+                    Canvas.SetTop(_selectionRect, y);
+                    _selectionRect.Width = width;
+                    _selectionRect.Height = height;
+                }
+            }
+            else if (HasSelection)
+            {
+                var bounds = GetSelectionBounds();
+
+                // Show resize cursor when hovering over corner handles
+                var cornerHandles = new[] {
+                    new Point(bounds.Left - 4, bounds.Top - 4),
+                    new Point(bounds.Right + 4, bounds.Top - 4),
+                    new Point(bounds.Left - 4, bounds.Bottom + 4),
+                    new Point(bounds.Right + 4, bounds.Bottom + 4)
+                };
+                for (int i = 0; i < cornerHandles.Length; i++)
+                {
+                    var hitRect = new Rect(cornerHandles[i].X - 8, cornerHandles[i].Y - 8, 16, 16);
+                    if (hitRect.Contains(point))
+                    {
+                        Cursor = GetResizeCursor(i);
+                        return;
+                    }
+                }
+
+                var inflatedBounds = bounds;
+                inflatedBounds.Inflate(8, 8);
+                Cursor = inflatedBounds.Contains(point) ? Cursors.SizeAll : Cursors.Cross;
+            }
+            else
+            {
+                Cursor = Cursors.Cross;
+            }
+        }
+
+        private void SelectionOverlayCanvas_MouseLeftButtonUpCore()
+        {
+            if (!_isSelectionMode) return;
+
+            if (_isResizingSelection)
+            {
+                _isResizingSelection = false;
+                if (SelectionOverlayCanvas.IsMouseCaptured)
+                    SelectionOverlayCanvas.ReleaseMouseCapture();
+
+                if (Math.Abs(_lastResizeScale - 1.0) > 0.001)
+                    SelectionResizeCompleted?.Invoke(this, new SelectionResizeCompletedEventArgs(
+                        _lastResizeScale, _resizeAnchorPoint,
+                        new List<Stroke>(_selectedStrokes),
+                        new List<Grid>(_selectedTextContainers)));
+                _lastResizeScale = 1.0;
+            }
+            else if (_isDraggingSelection)
+            {
+                _isDraggingSelection = false;
+                if (SelectionOverlayCanvas.IsMouseCaptured)
+                    SelectionOverlayCanvas.ReleaseMouseCapture();
+
+                if (Math.Abs(_totalDragDeltaX) > 0.5 || Math.Abs(_totalDragDeltaY) > 0.5)
+                    SelectionMoveCompleted?.Invoke(this, new SelectionMoveCompletedEventArgs(
+                        _totalDragDeltaX, _totalDragDeltaY,
+                        new List<Stroke>(_selectedStrokes),
+                        new List<Grid>(_selectedTextContainers)));
+                _totalDragDeltaX = 0;
+                _totalDragDeltaY = 0;
+            }
+            else if (_isSelecting)
+            {
+                _isSelecting = false;
+                if (SelectionOverlayCanvas.IsMouseCaptured)
+                    SelectionOverlayCanvas.ReleaseMouseCapture();
+
+                _selectedStrokes.Clear();
+                _selectedTextContainers.Clear();
+
+                if (_selectionShape == SelectionShape.FreeForm && _freeSelectionPoints?.Count > 2)
+                {
+                    var polygon = _freeSelectionPoints;
+
+                    if (_selectionFilter != SelectionFilter.TextOnly)
+                    {
+                        foreach (var stroke in InkCanvas.Strokes)
+                        {
+                            if (IsRectInsidePolygon(polygon, stroke.GetBounds()))
+                                _selectedStrokes.Add(stroke);
+                        }
+                    }
+
+                    if (_selectionFilter != SelectionFilter.DrawingsOnly)
+                    {
+                        foreach (var element in TextOverlayCanvas.Children)
+                        {
+                            if (element is Grid container)
+                            {
+                                var containerRect = new Rect(Canvas.GetLeft(container), Canvas.GetTop(container), container.ActualWidth, container.ActualHeight);
+                                if (IsRectInsidePolygon(polygon, containerRect))
+                                    _selectedTextContainers.Add(container);
+                            }
+                        }
+                    }
+
+                    _freeSelectionPath = null;
+                    _freeSelectionPoints = null;
+                }
+                else if (_selectionRect != null)
+                {
+                    var selX = Canvas.GetLeft(_selectionRect);
+                    var selY = Canvas.GetTop(_selectionRect);
+                    var selRect = new Rect(selX, selY, _selectionRect.Width, _selectionRect.Height);
+
+                    if (_selectionFilter != SelectionFilter.TextOnly)
+                    {
+                        foreach (var stroke in InkCanvas.Strokes)
+                        {
+                            if (selRect.Contains(stroke.GetBounds()))
+                                _selectedStrokes.Add(stroke);
+                        }
+                    }
+
+                    if (_selectionFilter != SelectionFilter.DrawingsOnly)
+                    {
+                        foreach (var element in TextOverlayCanvas.Children)
+                        {
+                            if (element is Grid container)
+                            {
+                                var containerRect = new Rect(Canvas.GetLeft(container), Canvas.GetTop(container), container.ActualWidth, container.ActualHeight);
+                                if (selRect.Contains(containerRect))
+                                    _selectedTextContainers.Add(container);
+                            }
+                        }
+                    }
+
+                    _selectionRect = null;
+                }
+
+                // Auto-clear visuals if nothing was caught
+                if (_selectedStrokes.Count == 0 && _selectedTextContainers.Count == 0)
+                    SelectionOverlayCanvas.Children.Clear();
+                else
+                    UpdateSelectionVisuals();
+            }
+        }
+
+        private static bool IsPointInPolygon(System.Windows.Media.PointCollection polygon, Point p)
+        {
+            bool inside = false;
+            int j = polygon.Count - 1;
+            for (int i = 0; i < polygon.Count; i++)
+            {
+                if (((polygon[i].Y > p.Y) != (polygon[j].Y > p.Y)) &&
+                    (p.X < (polygon[j].X - polygon[i].X) * (p.Y - polygon[i].Y) / (polygon[j].Y - polygon[i].Y) + polygon[i].X))
+                    inside = !inside;
+                j = i;
+            }
+            return inside;
+        }
+
+        private static bool IsRectInsidePolygon(System.Windows.Media.PointCollection polygon, Rect rect)
+        {
+            return IsPointInPolygon(polygon, rect.TopLeft) &&
+                   IsPointInPolygon(polygon, rect.TopRight) &&
+                   IsPointInPolygon(polygon, rect.BottomLeft) &&
+                   IsPointInPolygon(polygon, rect.BottomRight);
+        }
+
+        private void SelectionOverlayCanvas_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            if (!_isSelectionMode) return;
+            var point = e.GetPosition(SelectionOverlayCanvas);
+            SelectionOverlayCanvas_MouseLeftButtonDownCore(point);
+            e.Handled = true;
+        }
+
+        private void SelectionOverlayCanvas_MouseMove(object sender, MouseEventArgs e)
+        {
+            if (!_isSelectionMode) return;
+            var point = e.GetPosition(SelectionOverlayCanvas);
+            SelectionOverlayCanvas_MouseMoveCore(point);
+            e.Handled = true;
+        }
+
+        private void SelectionOverlayCanvas_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+        {
+            if (!_isSelectionMode) return;
+            SelectionOverlayCanvas_MouseLeftButtonUpCore();
+            e.Handled = true;
+        }
+
+        private void SelectionOverlayCanvas_StylusDown(object sender, StylusDownEventArgs e)
+        {
+            if (!_isSelectionMode) return;
+            var point = e.GetPosition(SelectionOverlayCanvas);
+            SelectionOverlayCanvas_MouseLeftButtonDownCore(point);
+            e.Handled = true;
+        }
+
+        private void SelectionOverlayCanvas_StylusMove(object sender, StylusEventArgs e)
+        {
+            if (!_isSelectionMode) return;
+            var point = e.GetPosition(SelectionOverlayCanvas);
+            SelectionOverlayCanvas_MouseMoveCore(point);
+            e.Handled = true;
+        }
+
+        private void SelectionOverlayCanvas_StylusUp(object sender, StylusEventArgs e)
+        {
+            if (!_isSelectionMode) return;
+            SelectionOverlayCanvas_MouseLeftButtonUpCore();
+            e.Handled = true;
         }
     }
 }

@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Runtime.InteropServices;
@@ -18,20 +18,36 @@ using PdfiumViewer;
 using PdfiumPdfDocument = PdfiumViewer.PdfDocument;
 using PdfSharpPdfRectangle = PdfSharpCore.Pdf.PdfRectangle;
 
-namespace WindowsNotesApp.Services
+namespace Caelum.Services
 {
     public class PdfService
     {
         private readonly SemaphoreSlim _documentLock = new SemaphoreSlim(1, 1);
+        private const double PdfPointToDipScale = 96.0 / 72.0;
         private PdfiumPdfDocument _pdfDocument;
         private Stream _pdfBackingStream;
         private string _sourceFilePath;
+        private readonly Dictionary<int, PdfPageTextInfo> _pageTextInfoCache = new Dictionary<int, PdfPageTextInfo>();
 
         private sealed class LoadedPdfDocument
         {
             public PdfiumPdfDocument Document { get; init; }
             public Stream BackingStream { get; init; }
             public Dictionary<int, Models.PageAnnotation> ExtractedAnnotations { get; init; } = new();
+        }
+
+        public sealed class PdfTextCharacterInfo
+        {
+            public int Offset { get; init; }
+            public char Character { get; init; }
+            public IReadOnlyList<Rect> Bounds { get; init; } = Array.Empty<Rect>();
+            public Rect UnionBounds { get; init; }
+        }
+
+        public sealed class PdfPageTextInfo
+        {
+            public string Text { get; init; } = string.Empty;
+            public IReadOnlyList<PdfTextCharacterInfo> Characters { get; init; } = Array.Empty<PdfTextCharacterInfo>();
         }
 
         public int PageCount => _pdfDocument?.PageCount ?? 0;
@@ -60,6 +76,96 @@ namespace WindowsNotesApp.Services
         public async Task LoadPdfAsync(string filePath, CancellationToken cancellationToken = default)
         {
             await LoadPdfCoreAsync(filePath, cancellationToken);
+        }
+
+        public bool TryGetCachedPageTextInfo(int pageIndex, out PdfPageTextInfo textInfo)
+        {
+            return _pageTextInfoCache.TryGetValue(pageIndex, out textInfo);
+        }
+
+        public async Task<PdfPageTextInfo> GetPageTextInfoAsync(int pageIndex, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            await _documentLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                if (_pageTextInfoCache.TryGetValue(pageIndex, out var cached))
+                    return cached;
+
+                if (_pdfDocument == null || pageIndex < 0 || pageIndex >= _pdfDocument.PageCount)
+                    return new PdfPageTextInfo();
+
+                var textInfo = await Task.Run(() => BuildPageTextInfo(pageIndex, cancellationToken), cancellationToken).ConfigureAwait(false);
+                _pageTextInfoCache[pageIndex] = textInfo;
+                return textInfo;
+            }
+            finally
+            {
+                _documentLock.Release();
+            }
+        }
+
+        private PdfPageTextInfo BuildPageTextInfo(int pageIndex, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            string text = _pdfDocument.GetPdfText(pageIndex) ?? string.Empty;
+            var characters = new List<PdfTextCharacterInfo>(text.Length);
+
+            for (int offset = 0; offset < text.Length; offset++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var span = new PdfTextSpan(pageIndex, offset, 1);
+                var bounds = GetTextBoundsInDips(pageIndex, span);
+
+                Rect unionBounds = Rect.Empty;
+                for (int i = 0; i < bounds.Count; i++)
+                {
+                    if (unionBounds.IsEmpty)
+                        unionBounds = bounds[i];
+                    else
+                        unionBounds.Union(bounds[i]);
+                }
+
+                characters.Add(new PdfTextCharacterInfo
+                {
+                    Offset = offset,
+                    Character = text[offset],
+                    Bounds = bounds,
+                    UnionBounds = unionBounds
+                });
+            }
+
+            return new PdfPageTextInfo
+            {
+                Text = text,
+                Characters = characters
+            };
+        }
+
+        private IReadOnlyList<Rect> GetTextBoundsInDips(int pageIndex, PdfTextSpan span)
+        {
+            var pdfBounds = _pdfDocument.GetTextBounds(span);
+            if (pdfBounds == null || pdfBounds.Count == 0)
+                return Array.Empty<Rect>();
+
+            var bounds = new List<Rect>(pdfBounds.Count);
+            foreach (var pdfRect in pdfBounds)
+            {
+                if (!pdfRect.IsValid)
+                    continue;
+
+                var deviceRect = _pdfDocument.RectangleFromPdf(pageIndex, pdfRect.Bounds);
+                if (deviceRect.Width <= 0 || deviceRect.Height <= 0)
+                    continue;
+
+                bounds.Add(new Rect(
+                    deviceRect.X * PdfPointToDipScale,
+                    deviceRect.Y * PdfPointToDipScale,
+                    deviceRect.Width * PdfPointToDipScale,
+                    deviceRect.Height * PdfPointToDipScale));
+            }
+
+            return bounds.Count == 0 ? Array.Empty<Rect>() : bounds;
         }
 
         private async Task LoadPdfCoreAsync(string filePath, CancellationToken cancellationToken)
@@ -130,6 +236,7 @@ namespace WindowsNotesApp.Services
 
         private void DisposeCurrentDocument()
         {
+            _pageTextInfoCache.Clear();
             _pdfDocument?.Dispose();
             _pdfDocument = null;
             _pdfBackingStream?.Dispose();
@@ -139,8 +246,8 @@ namespace WindowsNotesApp.Services
         private Dictionary<int, Models.PageAnnotation> ExtractAndStripAnnotations(Stream sourceStream, Stream outputStream, CancellationToken cancellationToken)
         {
             var extractedAnnotations = new Dictionary<int, Models.PageAnnotation>();
-            const double renderDpi = 192.0;
-            double scale = renderDpi / 72.0;
+            const double dipDpi = 96.0;
+            double scale = dipDpi / 72.0;
 
             using var document = PdfReader.Open(sourceStream, PdfDocumentOpenMode.Modify);
 
@@ -447,16 +554,21 @@ namespace WindowsNotesApp.Services
         {
             if (!File.Exists(filePath)) throw new FileNotFoundException("PDF to save not found.");
 
+            var fileInfo = new FileInfo(filePath);
+            if (fileInfo.IsReadOnly)
+                throw new UnauthorizedAccessException($"The file \"{Path.GetFileName(filePath)}\" is read-only. Please disable read-only mode in file properties and try again.");
+
             string tempPath = Path.Combine(
                 Path.GetDirectoryName(filePath) ?? string.Empty,
                 $"{Path.GetFileName(filePath)}.{Guid.NewGuid():N}.tmp");
 
             try
             {
-                using var sourceStream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-                using var document = PdfReader.Open(sourceStream, PdfDocumentOpenMode.Modify);
-                const double renderDpi = 192.0;
-                double scale = 72.0 / renderDpi;
+                using (var sourceStream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                using (var document = PdfReader.Open(sourceStream, PdfDocumentOpenMode.Modify))
+                {
+                const double dipDpi = 96.0;
+                double scale = 72.0 / dipDpi;
 
                 for (int i = 0; i < document.PageCount; i++)
                 {
@@ -493,7 +605,7 @@ namespace WindowsNotesApp.Services
                         double y = pageHeight - (textItem.Y * scale) - h;
 
                         var rect = new PdfSharpPdfRectangle(new XRect(x, y, w, h));
-                        var dict = new PdfDictionary();
+                        var dict = new PdfDictionary(document);
                         dict.Elements.SetName(PdfAnnotation.Keys.Subtype, "/FreeText");
                         dict.Elements.SetRectangle(PdfAnnotation.Keys.Rect, rect);
                         dict.Elements.SetString(PdfAnnotation.Keys.Contents, textItem.Text);
@@ -509,7 +621,7 @@ namespace WindowsNotesApp.Services
                     {
                         if (stroke.Points.Count == 0) continue;
 
-                        var dict = new PdfDictionary();
+                        var dict = new PdfDictionary(document);
                         dict.Elements.SetName(PdfAnnotation.Keys.Subtype, "/Ink");
                         dict.Elements.SetRectangle(PdfAnnotation.Keys.Rect, new PdfSharpPdfRectangle(new XRect(0, 0, pdfPage.Width, pdfPage.Height)));
                         dict.Elements.SetString("/NM", $"wna_ink_{Guid.NewGuid()}");
@@ -546,8 +658,24 @@ namespace WindowsNotesApp.Services
                 {
                     document.Save(outputStream);
                 }
+                } // sourceStream and document are disposed here, before File.Move
 
-                File.Move(tempPath, filePath, true);
+                try
+                {
+                    File.Move(tempPath, filePath, true);
+                }
+                catch (UnauthorizedAccessException ex)
+                {
+                    throw new UnauthorizedAccessException(
+                        $"Cannot save to \"{Path.GetFileName(filePath)}\". The file may be open in another program (e.g., PDF reader). " +
+                        $"Please close the file and try again.", ex);
+                }
+                catch (IOException ex)
+                {
+                    throw new IOException(
+                        $"Cannot save to \"{Path.GetFileName(filePath)}\". The file may be open in another program. " +
+                        $"Please close the file and try again.", ex);
+                }
             }
             finally
             {
@@ -560,13 +688,18 @@ namespace WindowsNotesApp.Services
 
         private void AddAnnotationToPage(PdfSharpCore.Pdf.PdfPage page, PdfDictionary annotation)
         {
+            // Register as an indirect object (PDF spec §12.3.3 requires annotations to be indirect
+            // objects referenced by N 0 R). Inline annotation dicts can confuse strict viewers like Edge.
+            if (annotation.Reference == null)
+                page.Owner.Internals.AddObject(annotation);
+
             var annots = page.Elements.GetArray("/Annots");
             if (annots == null)
             {
                 annots = new PdfArray(page.Owner);
                 page.Elements.Add("/Annots", annots);
             }
-            annots.Elements.Add(annotation);
+            annots.Elements.Add(annotation.Reference);
         }
 
         private static double GetDouble(PdfItem item, double defaultValue = 0)

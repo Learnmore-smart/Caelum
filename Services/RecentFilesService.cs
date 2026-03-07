@@ -1,10 +1,10 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
 
-namespace WindowsNotesApp.Services
+namespace Caelum.Services
 {
     public sealed class RecentFileEntry
     {
@@ -31,7 +31,7 @@ namespace WindowsNotesApp.Services
         {
             var dir = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "WindowsNotesApp");
+                "Caelum");
             Directory.CreateDirectory(dir);
             _filePath = Path.Combine(dir, "recent_files.json");
             _legacyFilePath = Path.Combine(dir, "recent_files.txt");

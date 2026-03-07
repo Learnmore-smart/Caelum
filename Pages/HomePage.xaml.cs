@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
@@ -8,9 +8,9 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using Microsoft.Win32;
-using WindowsNotesApp.Services;
+using Caelum.Services;
 
-namespace WindowsNotesApp.Pages
+namespace Caelum.Pages
 {
     public sealed partial class HomePage : Page
     {
@@ -59,6 +59,7 @@ namespace WindowsNotesApp.Pages
                 System.Diagnostics.Debug.WriteLine($"Error loading recent files: {ex.Message}");
             }
 
+            RefreshSelectionState();
             return Task.CompletedTask;
         }
 
@@ -88,8 +89,9 @@ namespace WindowsNotesApp.Pages
                     return false;
                 };
             }
+            view.Refresh();
+            RefreshSelectionState();
         }
-
         public void SortByName()
         {
             var view = (System.Windows.Data.CollectionView)System.Windows.Data.CollectionViewSource.GetDefaultView(HomeTiles);
@@ -106,7 +108,7 @@ namespace WindowsNotesApp.Pages
             view.SortDescriptions.Add(new SortDescription("LastModified", ListSortDirection.Descending));
         }
 
-        private void TilesGrid_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        private void TilesGrid_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
         {
         }
 
@@ -218,16 +220,31 @@ namespace WindowsNotesApp.Pages
             var inputWin = new Window
             {
                 Title = "Rename File",
-                Width = 400,
-                Height = 210,
+                Width = 430,
+                Height = 240,
                 WindowStartupLocation = WindowStartupLocation.CenterOwner,
                 Owner = mw,
                 ResizeMode = ResizeMode.NoResize,
                 WindowStyle = WindowStyle.None,
-                Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(253, 253, 253)),
-                BorderThickness = new Thickness(1),
-                BorderBrush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(200, 200, 200)),
+                AllowsTransparency = true,
+                Background = System.Windows.Media.Brushes.Transparent,
                 ShowInTaskbar = false
+            };
+
+            var mainBorder = new Border
+            {
+                Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(253, 253, 253)),
+                CornerRadius = new CornerRadius(8),
+                BorderThickness = new Thickness(1),
+                BorderBrush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(220, 220, 220)),
+                Margin = new Thickness(14),
+                Effect = new System.Windows.Media.Effects.DropShadowEffect
+                {
+                    BlurRadius = 14,
+                    ShadowDepth = 4,
+                    Opacity = 0.15,
+                    Color = System.Windows.Media.Colors.Black
+                }
             };
 
             var grid = new Grid { Margin = new Thickness(24) };
@@ -236,6 +253,7 @@ namespace WindowsNotesApp.Pages
             grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
 
+            mainBorder.Child = grid;
             inputWin.MouseLeftButtonDown += (s, ev) => { inputWin.DragMove(); };
 
             var titleLabel = new TextBlock
@@ -333,7 +351,7 @@ namespace WindowsNotesApp.Pages
             btnPanel.Children.Add(okBtn);
             grid.Children.Add(btnPanel);
 
-            inputWin.Content = grid;
+            inputWin.Content = mainBorder;
             nameBox.Focus();
 
             if (inputWin.ShowDialog() == true)
@@ -435,6 +453,7 @@ namespace WindowsNotesApp.Pages
             var insertIndex = Math.Min(1, HomeTiles.Count);
             HomeTiles.Insert(insertIndex, HomeTile.CreateFileTile(path));
             RecentFilesService.AddOrPromote(path);
+            RefreshSelectionState();
             await Task.CompletedTask;
         }
 
@@ -481,6 +500,7 @@ namespace WindowsNotesApp.Pages
                 {
                     HomeTiles.RemoveAt(i);
                     RecentFilesService.Remove(tile.Path);
+                    RefreshSelectionState();
                     await Task.CompletedTask;
                     return;
                 }
@@ -489,7 +509,15 @@ namespace WindowsNotesApp.Pages
 
         private async Task ShowDialogAsync(string title, string content)
         {
-            MessageBox.Show(content, title, MessageBoxButton.OK, MessageBoxImage.Information);
+            var mw = Window.GetWindow(this);
+            if (mw != null)
+            {
+                await DialogService.ShowInfoAsync(mw, title, content);
+            }
+            else
+            {
+                MessageBox.Show(content, title, MessageBoxButton.OK, MessageBoxImage.Information);
+            }
             await Task.CompletedTask;
         }
 
@@ -642,6 +670,7 @@ namespace WindowsNotesApp.Pages
         }
     }
 }
+
 
 
 

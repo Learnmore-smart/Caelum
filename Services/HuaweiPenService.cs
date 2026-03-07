@@ -3,7 +3,7 @@ using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Interop;
 
-namespace WindowsNotesApp.Services
+namespace Caelum.Services
 {
     /// <summary>
     /// Lightweight service for Huawei M-Pencil eraser toggle on MateBook devices.

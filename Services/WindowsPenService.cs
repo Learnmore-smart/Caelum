@@ -6,7 +6,7 @@ using System.Windows;
 using System.Windows.Input;
 using System.Windows.Interop;
 
-namespace WindowsNotesApp.Services
+namespace Caelum.Services
 {
     /// <summary>
     /// Unified service for all Windows-compatible pens (Surface Pen, Wacom,
