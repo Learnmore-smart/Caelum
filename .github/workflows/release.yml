@@ -46,7 +46,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            installer_output/Caelum-Setup-*.exe
+            installer_output/Caelum-Setup.exe
             Caelum-Portable-win-x64.zip
           generate_release_notes: true
 
@@ -55,7 +55,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Caelum-Installer
-          path: installer_output/Caelum-Setup-*.exe
+          path: installer_output/Caelum-Setup.exe
 
       - name: Upload portable artifact
         uses: actions/upload-artifact@v4
