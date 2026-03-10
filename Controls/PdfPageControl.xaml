@@ -6,10 +6,18 @@
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d">
 
-    <Grid x:Name="PageGrid" Background="White">
-        <!-- PDF Background -->
-        <Image x:Name="PdfImage" Stretch="Uniform" HorizontalAlignment="Center" VerticalAlignment="Top"
-               RenderOptions.BitmapScalingMode="HighQuality"/>
+    <Grid x:Name="RootGrid">
+        <!-- Shadow casting Border (separate from content to maintain hardware accel for ink) -->
+        <Border Background="White">
+            <Border.Effect>
+                <DropShadowEffect BlurRadius="12" ShadowDepth="2" Opacity="0.10" Color="Black" />
+            </Border.Effect>
+        </Border>
+
+        <Grid x:Name="PageGrid" Background="White">
+            <!-- PDF Background -->
+            <Image x:Name="PdfImage" Stretch="Uniform" HorizontalAlignment="Center" VerticalAlignment="Top"
+                   RenderOptions.BitmapScalingMode="HighQuality"/>
 
         <!-- Ink Layer (WPF InkCanvas) -->
         <InkCanvas x:Name="InkCanvas" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" Background="Transparent"
@@ -18,7 +26,10 @@
                    Stylus.IsFlicksEnabled="False" />
 
         <!-- Text/Widget Layer -->
-        <Canvas x:Name="TextOverlayCanvas" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" Background="Transparent"/>
+        <Canvas x:Name="TextOverlayCanvas" HorizontalAlignment="Stretch" VerticalAlignment="Stretch"/>
+
+        <!-- Persistent Text Highlights Layer -->
+        <Canvas x:Name="HighlightsCanvas" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" Background="Transparent" IsHitTestVisible="False"/>
 
         <!-- PDF Text Selection Layer -->
         <Canvas x:Name="PdfTextSelectionCanvas" HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
@@ -39,6 +50,7 @@
                      Visibility="Collapsed"
                      IsHitTestVisible="False"/>
         </Canvas>
+        </Grid>
     </Grid>
 </UserControl>
 

@@ -5,7 +5,8 @@
       Background="Transparent"
       AllowDrop="True"
       PreviewMouseDown="EditorPage_PreviewMouseDown"
-      PreviewStylusDown="EditorPage_PreviewStylusDown">
+      PreviewStylusDown="EditorPage_PreviewStylusDown"
+      PreviewKeyDown="EditorPage_PreviewKeyDown">
 
     <Page.Resources>
         <!-- Toolbar button -->
@@ -84,7 +85,7 @@
 
         <!-- PDF Pages Container (full area) -->
         <ScrollViewer x:Name="PdfScrollViewer" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
-                      Background="#FFB0B0B0"
+                      Background="#90E5E7EB"
                       Style="{StaticResource SleekScrollViewer}"
                       PanningMode="None"
                       Stylus.IsFlicksEnabled="False"
@@ -146,9 +147,11 @@
                 <!-- Highlighter -->
                 <ToggleButton x:Name="HighlighterToolButton" Click="HighlighterToolButton_Click"
                         Style="{StaticResource ToolbarToggleButtonStyle}"
-                        Width="42" Height="36" Margin="2,0">
+                        Width="42" Height="36" Margin="2,0" ToolTip="Freehand Highlighter">
                     <TextBlock x:Name="HighlighterIcon" Text="&#xE7E6;" FontFamily="Segoe MDL2 Assets" FontSize="19" Foreground="#F59E0B"/>
                 </ToggleButton>
+
+
 
                 <!-- Eraser -->
                 <ToggleButton x:Name="EraserToolButton" Click="EraserToolButton_Click"
@@ -173,8 +176,7 @@
                     <TextBlock Text="A" FontSize="17" FontWeight="Bold" Foreground="#555"/>
                 </ToggleButton>
 
-                <!-- Separator -->
-                <Border Width="1" Background="#18000000" Margin="4,8"/>
+
 
                 <!-- Save -->
                 <Button x:Name="SavePdfButton" Click="SavePdf_Click"
@@ -182,6 +184,13 @@
                         Width="42" Height="36" Margin="2,0" ToolTip="Save">
                     <TextBlock Text="&#xE74E;" FontFamily="Segoe MDL2 Assets" FontSize="17" Foreground="#444"/>
                 </Button>
+
+                <!-- Separator -->
+                <Border Width="1" Background="#18000000" Margin="4,8"/>
+
+                <!-- Page Number -->
+                <TextBlock x:Name="PageNumberText" Text="0 / 0" FontSize="13" Foreground="#555" 
+                           VerticalAlignment="Center" Margin="8,0,8,0" ToolTip="Current Page"/>
 
                 <!-- Separator -->
                 <Border Width="1" Background="#18000000" Margin="4,8"/>

@@ -12,6 +12,7 @@ namespace Caelum.Models
     {
         public List<StrokeAnnotation> Strokes { get; set; } = new();
         public List<TextAnnotation> Texts { get; set; } = new();
+        public List<HighlightAnnotation> Highlights { get; set; } = new();
     }
 
     public class StrokeAnnotation
@@ -34,5 +35,15 @@ namespace Caelum.Models
         public byte G { get; set; }
         public byte B { get; set; }
         public double FontSize { get; set; } = 18;
+    }
+
+    public class HighlightAnnotation
+    {
+        // Each array contains [X, Y, Width, Height]
+        public List<double[]> Rects { get; set; } = new();
+        public byte R { get; set; } = 255;
+        public byte G { get; set; } = 255;
+        public byte B { get; set; } = 0;
+        public byte A { get; set; } = 128;
     }
 }

@@ -3,6 +3,7 @@ namespace Caelum.Models
     public sealed class AppSettings
     {
         public AppLanguage Language { get; set; } = AppLanguage.English;
+        public bool EnablePressure { get; set; } = true;
     }
 
     public sealed class LanguageOption

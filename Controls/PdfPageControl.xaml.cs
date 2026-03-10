@@ -146,9 +146,16 @@ namespace Caelum.Controls
         /// </summary>
         public bool TiltEnabled { get; set; } = true;
 
+        // Custom stroke collection to prevent WPF's InkCanvas from clearing strokes
+        // during visibility or EditingMode toggles.
+        private readonly StrokeCollection _strokes = new StrokeCollection();
+
         public PdfPageControl()
         {
             InitializeComponent();
+            
+            // Assign stable stroke collection
+            InkCanvas.Strokes = _strokes;
 
             _drawingAttributes = new DrawingAttributes
             {
@@ -164,6 +171,8 @@ namespace Caelum.Controls
             };
 
             InkCanvas.DefaultDrawingAttributes = _drawingAttributes;
+            InkCanvas.UseCustomCursor = true;
+            InkCanvas.Cursor = Cursors.None;
             InkCanvas.EditingMode = InkCanvasEditingMode.None;
             InkCanvas.EditingModeInverted = InkCanvasEditingMode.None; // Disable native inverted erasing so we can use custom logic
             InkCanvas.StrokeCollected += InkCanvas_StrokeCollected;
@@ -176,6 +185,25 @@ namespace Caelum.Controls
 
             Loaded += PdfPageControl_Loaded;
             Unloaded += PdfPageControl_Unloaded;
+        }
+
+        /// <summary>
+        /// Returns true if the given stylus device is a finger touch rather
+        /// than a pen/stylus.  Used to let finger events pass through to the
+        /// WPF manipulation system for pan/zoom gestures.
+        /// </summary>
+        private static bool IsTouchFinger(StylusDevice device)
+        {
+            if (device == null) return false;
+            var tablet = device.TabletDevice;
+            if (tablet == null) return false;
+            // Pen devices report as Stylus. Some pen-as-touch devices (e.g.
+            // Huawei M-Pencil) report as Touch but have multiple stylus buttons.
+            // Real fingers have TabletDeviceType.Touch with ≤1 button.
+            if (tablet.Type == System.Windows.Input.TabletDeviceType.Stylus)
+                return false;
+            return tablet.Type == System.Windows.Input.TabletDeviceType.Touch
+                && device.StylusButtons.Count <= 1;
         }
 
         /// <summary>
@@ -291,8 +319,9 @@ namespace Caelum.Controls
 
         private void InkCanvas_MouseEnter(object sender, MouseEventArgs e)
         {
-            if (_currentMode == CustomInkInputProcessingMode.Erasing || _isStylusInverted)
+            if (_currentMode == CustomInkInputProcessingMode.Erasing || _isStylusInverted || _currentMode == CustomInkInputProcessingMode.Inking)
             {
+                UpdateBrushIndicatorStyle();
                 EraserIndicator.Visibility = Visibility.Visible;
                 Cursor = Cursors.None;
                 UpdateEraserIndicatorPosition(e.GetPosition(PageGrid));
@@ -344,6 +373,12 @@ namespace Caelum.Controls
 
             if (inverted)
             {
+                UpdateBrushIndicatorStyle();
+                UpdateEraserIndicatorPosition(e.GetPosition(PageGrid));
+            }
+            else if (_currentMode == CustomInkInputProcessingMode.Inking)
+            {
+                UpdateBrushIndicatorStyle();
                 UpdateEraserIndicatorPosition(e.GetPosition(PageGrid));
             }
         }
@@ -399,6 +434,11 @@ namespace Caelum.Controls
             if (!_isPdfTextSelectionEnabled)
                 return;
 
+            // Let finger touches pass through to WPF manipulation (pan/zoom).
+            // Only pen/stylus devices should trigger PDF text selection.
+            if (IsTouchFinger(e.StylusDevice))
+                return;
+
             PdfTextSelectionCanvas.CaptureStylus();
             PdfTextSelectionPointerPressed?.Invoke(this, new PdfTextSelectionPointerEventArgs(e.GetPosition(PageGrid), MouseButtonState.Pressed));
             e.Handled = true;
@@ -409,6 +449,9 @@ namespace Caelum.Controls
             if (!_isPdfTextSelectionEnabled)
                 return;
 
+            if (IsTouchFinger(e.StylusDevice))
+                return;
+
             PdfTextSelectionPointerMoved?.Invoke(this, new PdfTextSelectionPointerEventArgs(e.GetPosition(PageGrid), MouseButtonState.Pressed));
             if (PdfTextSelectionCanvas.IsStylusCaptured)
                 e.Handled = true;
@@ -417,6 +460,9 @@ namespace Caelum.Controls
         private void PdfTextSelectionCanvas_StylusUp(object sender, StylusEventArgs e)
         {
             if (!_isPdfTextSelectionEnabled)
+                return;
+
+            if (IsTouchFinger(e.StylusDevice))
                 return;
 
             PdfTextSelectionPointerReleased?.Invoke(this, new PdfTextSelectionPointerEventArgs(e.GetPosition(PageGrid), MouseButtonState.Released));
@@ -527,6 +573,7 @@ namespace Caelum.Controls
                     InkCanvas.EditingMode = InkCanvasEditingMode.None;
 
                 // Show eraser indicator at contact point
+                UpdateBrushIndicatorStyle();
                 EraserIndicator.Visibility = Visibility.Visible;
                 InkCanvas.Cursor = Cursors.None;
                 UpdateEraserIndicatorPosition(e.GetPosition(PageGrid));
@@ -575,24 +622,46 @@ namespace Caelum.Controls
 
         private void InkCanvas_MouseMove(object sender, MouseEventArgs e)
         {
-            if (_currentMode == CustomInkInputProcessingMode.Erasing)
+            if (_currentMode == CustomInkInputProcessingMode.Erasing || _currentMode == CustomInkInputProcessingMode.Inking)
             {
+                UpdateBrushIndicatorStyle();
                 var point = e.GetPosition(PageGrid);
                 UpdateEraserIndicatorPosition(point);
 
-                if (e.LeftButton == MouseButtonState.Pressed)
+                if (_currentMode == CustomInkInputProcessingMode.Erasing && e.LeftButton == MouseButtonState.Pressed)
                 {
                     EraseStrokesAtPoints(new StylusPointCollection { new StylusPoint(e.GetPosition(InkCanvas).X, e.GetPosition(InkCanvas).Y) });
                 }
             }
         }
 
+        private void UpdateBrushIndicatorStyle()
+        {
+            if (_currentMode == CustomInkInputProcessingMode.Erasing || _isStylusInverted)
+            {
+                EraserIndicator.Width = _eraserSize;
+                EraserIndicator.Height = _eraserSize;
+                EraserIndicator.Stroke = new SolidColorBrush(Color.FromArgb(255, 0, 120, 212));
+                EraserIndicator.Fill = new SolidColorBrush(Color.FromArgb(16, 0, 120, 212));
+            }
+            else if (_currentMode == CustomInkInputProcessingMode.Inking)
+            {
+                double size = _drawingAttributes.Width;
+                EraserIndicator.Width = Math.Max(4, size);
+                EraserIndicator.Height = Math.Max(4, size);
+                
+                Color c = _drawingAttributes.Color;
+                EraserIndicator.Stroke = new SolidColorBrush(Color.FromArgb(200, c.R, c.G, c.B));
+                EraserIndicator.Fill = _drawingAttributes.IsHighlighter ? new SolidColorBrush(Color.FromArgb(50, c.R, c.G, c.B)) : Brushes.Transparent;
+            }
+        }
+
         private void UpdateEraserIndicatorPosition(Point point)
         {
-            EraserIndicator.Width = _eraserSize;
-            EraserIndicator.Height = _eraserSize;
-            Canvas.SetLeft(EraserIndicator, point.X - _eraserSize / 2);
-            Canvas.SetTop(EraserIndicator, point.Y - _eraserSize / 2);
+            double w = EraserIndicator.Width;
+            double h = EraserIndicator.Height;
+            Canvas.SetLeft(EraserIndicator, point.X - w / 2);
+            Canvas.SetTop(EraserIndicator, point.Y - h / 2);
             EraserIndicator.Visibility = Visibility.Visible;
         }
 
@@ -717,7 +786,9 @@ namespace Caelum.Controls
 
         public void SetMode(bool isTextMode)
         {
-            TextOverlayCanvas.IsHitTestVisible = isTextMode;
+            // Always keep TextOverlayCanvas hit-testable so textboxes can be clicked in any tool mode.
+            // Its background is transparent, so non-textbox clicks fall through to InkCanvas below.
+            TextOverlayCanvas.IsHitTestVisible = true;
         }
 
         public void SetPdfTextSelectionEnabled(bool enabled)
@@ -797,7 +868,7 @@ namespace Caelum.Controls
                     if (!_isPdfTextSelectionEnabled)
                         InkCanvas.IsHitTestVisible = true;
                     InkCanvas.EditingMode = InkCanvasEditingMode.Ink;
-                    EraserIndicator.Visibility = Visibility.Collapsed;
+                    // Keep indicator visible since we're updating it on mouse/stylus move now
                     InkCanvas.Cursor = Cursors.Cross;
                     Cursor = Cursors.Arrow;
                     break;
@@ -1487,6 +1558,58 @@ namespace Caelum.Controls
             if (!_isSelectionMode) return;
             SelectionOverlayCanvas_MouseLeftButtonUpCore();
             e.Handled = true;
+        }
+
+        private readonly List<HighlightAnnotation> _highlights = new();
+
+        public IReadOnlyList<HighlightAnnotation> GetHighlights() => _highlights;
+
+        public void AddHighlightAnnotation(IReadOnlyList<Rect> rects, Color color)
+        {
+            var highlight = new HighlightAnnotation
+            {
+                R = color.R,
+                G = color.G,
+                B = color.B,
+                A = 120 // Semi-transparent overlay
+            };
+
+            foreach (var r in rects)
+            {
+                highlight.Rects.Add(new double[] { r.X, r.Y, r.Width, r.Height });
+            }
+
+            _highlights.Add(highlight);
+            RenderHighlightVisual(highlight);
+        }
+
+        public void AddHighlight(HighlightAnnotation highlight)
+        {
+            _highlights.Add(highlight);
+            RenderHighlightVisual(highlight);
+        }
+
+        private void RenderHighlightVisual(HighlightAnnotation highlight)
+        {
+            var color = Color.FromArgb(highlight.A, highlight.R, highlight.G, highlight.B);
+            var brush = new SolidColorBrush(color);
+
+            foreach (var rectInfo in highlight.Rects)
+            {
+                if (rectInfo.Length >= 4)
+                {
+                    var rect = new System.Windows.Shapes.Rectangle
+                    {
+                        Width = rectInfo[2],
+                        Height = rectInfo[3],
+                        Fill = brush,
+                        IsHitTestVisible = false
+                    };
+                    Canvas.SetLeft(rect, rectInfo[0]);
+                    Canvas.SetTop(rect, rectInfo[1]);
+                    HighlightsCanvas.Children.Add(rect);
+                }
+            }
         }
     }
 }

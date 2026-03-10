@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
@@ -348,6 +349,50 @@ namespace Caelum.Services
                                 }
                                 elementsToRemove.Add(annotItem);
                             }
+                            else if (subtype == "/Highlight")
+                            {
+                                var quadPoints = dict.Elements.GetArray("/QuadPoints");
+                                if (quadPoints != null && quadPoints.Elements.Count >= 8)
+                                {
+                                    var highlightAnnot = new Models.HighlightAnnotation();
+
+                                    var cArray = dict.Elements.GetArray("/C");
+                                    if (cArray != null && cArray.Elements.Count >= 3)
+                                    {
+                                        highlightAnnot.R = (byte)(GetDouble(cArray.Elements[0]) * 255);
+                                        highlightAnnot.G = (byte)(GetDouble(cArray.Elements[1]) * 255);
+                                        highlightAnnot.B = (byte)(GetDouble(cArray.Elements[2]) * 255);
+                                    }
+
+                                    double ca = dict.Elements.ContainsKey("/CA") ? GetDouble(dict.Elements["/CA"], 1.0) : 1.0;
+                                    highlightAnnot.A = (byte)(ca * 255);
+
+                                    // QuadPoints: [TL.X, TL.Y, TR.X, TR.Y, BL.X, BL.Y, BR.X, BR.Y]
+                                    for (int pIdx = 0; pIdx < quadPoints.Elements.Count - 7; pIdx += 8)
+                                    {
+                                        double x1 = GetDouble(quadPoints.Elements[pIdx]);
+                                        double y1 = GetDouble(quadPoints.Elements[pIdx + 1]);
+                                        double x2 = GetDouble(quadPoints.Elements[pIdx + 2]);
+                                        double y2 = GetDouble(quadPoints.Elements[pIdx + 7]);
+
+                                        double minX = Math.Min(x1, x2);
+                                        double maxX = Math.Max(x1, x2);
+                                        double minY = Math.Min(y1, y2);
+                                        double maxY = Math.Max(y1, y2);
+
+                                        double x_ui = minX * scale;
+                                        double w_ui = (maxX - minX) * scale;
+                                        double h_ui = (maxY - minY) * scale;
+                                        double y_ui = (pageHeight - maxY) * scale; // Invert Y
+
+                                        highlightAnnot.Rects.Add(new[] { x_ui, y_ui, w_ui, h_ui });
+                                    }
+
+                                    if (highlightAnnot.Rects.Count > 0)
+                                        pageAnnots.Highlights.Add(highlightAnnot);
+                                }
+                                elementsToRemove.Add(annotItem);
+                            }
                         }
                     }
 
@@ -357,7 +402,7 @@ namespace Caelum.Services
                     }
                 }
 
-                if (pageAnnots.Strokes.Count > 0 || pageAnnots.Texts.Count > 0)
+                if (pageAnnots.Strokes.Count > 0 || pageAnnots.Texts.Count > 0 || pageAnnots.Highlights.Count > 0)
                 {
                     extractedAnnotations[i] = pageAnnots;
                 }
@@ -585,7 +630,7 @@ namespace Caelum.Services
                             if (dict != null)
                             {
                                 var sub = dict.Elements.GetName("/Subtype");
-                                if (sub == "/FreeText" || sub == "/Ink")
+                                if (sub == "/FreeText" || sub == "/Ink" || sub == "/Highlight")
                                     toRemove.Add(item);
                             }
                         }
@@ -599,23 +644,77 @@ namespace Caelum.Services
 
                     foreach (var textItem in pageAnnots.Texts)
                     {
-                        double w = 300 * scale;
-                        double h = (textItem.FontSize * 1.5) * scale;
+                        // Estimate annotation geometry
+                        var textLines = textItem.Text.Split('\n');
+                        double pdfFontSize = textItem.FontSize * scale;
+                        double lineHeight = pdfFontSize * 1.4;
+                        double w = Math.Max(150 * scale, textLines.Max(l => l.Length) * pdfFontSize * 0.55 + 12);
+                        double h = textLines.Length * lineHeight + pdfFontSize * 0.4;
+
                         double x = textItem.X * scale;
                         double y = pageHeight - (textItem.Y * scale) - h;
 
-                        var rect = new PdfSharpPdfRectangle(new XRect(x, y, w, h));
-                        var dict = new PdfDictionary(document);
-                        dict.Elements.SetName(PdfAnnotation.Keys.Subtype, "/FreeText");
-                        dict.Elements.SetRectangle(PdfAnnotation.Keys.Rect, rect);
-                        dict.Elements.SetString(PdfAnnotation.Keys.Contents, textItem.Text);
-                        dict.Elements.SetString("/NM", $"wna_text_{Guid.NewGuid()}");
+                        var xRect = new XRect(x, y, w, h);
+                        var annot = new PdfDictionary(document);
+                        annot.Elements.SetName(PdfAnnotation.Keys.Subtype, "/FreeText");
+                        annot.Elements.SetRectangle(PdfAnnotation.Keys.Rect, new PdfSharpPdfRectangle(xRect));
+                        annot.Elements.SetString(PdfAnnotation.Keys.Contents, textItem.Text);
+                        annot.Elements.SetString("/NM", $"wna_text_{Guid.NewGuid()}");
+                        annot.Elements.SetInteger("/F", 4); // Printable
 
-                        string da = $"/Helv {textItem.FontSize * scale} Tf {textItem.R / 255.0} {textItem.G / 255.0} {textItem.B / 255.0} rg";
-                        dict.Elements.SetString("/DA", da);
+                        double r2 = textItem.R / 255.0, g2 = textItem.G / 255.0, b2 = textItem.B / 255.0;
+                        // Remove border
+                        var bsForText = new PdfDictionary();
+                        bsForText.Elements.SetInteger("/W", 0);
+                        annot.Elements["/BS"] = bsForText;
 
-                        AddAnnotationToPage(pdfPage, dict);
+                        // /DA — required by spec
+                        annot.Elements.SetString("/DA", $"/Helv {pdfFontSize:F2} Tf {r2:F3} {g2:F3} {b2:F3} rg");
+
+                        // Build appearance stream as raw PDF content stream
+                        var apStream = new StringBuilder();
+                        apStream.AppendLine("q");
+                        apStream.AppendLine($"{r2:F3} {g2:F3} {b2:F3} rg");
+                        apStream.AppendLine("BT");
+                        apStream.AppendLine($"/Helv {pdfFontSize:F2} Tf");
+                        double yApStream = h - lineHeight + (lineHeight - pdfFontSize) / 2;
+                        for (int li = 0; li < textLines.Length; li++)
+                        {
+                            // Escape parentheses in content
+                            string escaped = textLines[li].Replace("\\", "\\\\").Replace("(", "\\(").Replace(")", "\\)");
+                            if (li == 0)
+                                apStream.AppendLine($"4 {yApStream:F2} Td");
+                            else
+                                apStream.AppendLine($"0 {-lineHeight:F2} Td");
+                            apStream.AppendLine($"({escaped}) Tj");
+                        }
+                        apStream.AppendLine("ET");
+                        apStream.AppendLine("Q");
+
+                        byte[] streamBytes = System.Text.Encoding.Latin1.GetBytes(apStream.ToString());
+                        var apNormal = new PdfDictionary(document);
+                        apNormal.Elements.SetName("/Type", "/XObject");
+                        apNormal.Elements.SetName("/Subtype", "/Form");
+                        apNormal.Elements.SetInteger("/FormType", 1);
+                        // BBox in form coordinates: origin bottom-left, y goes up
+                        var bboxArray = new PdfArray();
+                        bboxArray.Elements.Add(new PdfReal(0));
+                        bboxArray.Elements.Add(new PdfReal(0));
+                        bboxArray.Elements.Add(new PdfReal(w));
+                        bboxArray.Elements.Add(new PdfReal(h));
+                        apNormal.Elements["/BBox"] = bboxArray;
+                        // Embed the stream bytes
+                        apNormal.CreateStream(streamBytes);
+                        document.Internals.AddObject(apNormal);
+
+                        var apDict = new PdfDictionary(document);
+                        apDict.Elements["/N"] = apNormal.Reference;
+                        annot.Elements["/AP"] = apDict;
+
+                        AddAnnotationToPage(pdfPage, annot);
                     }
+
+
 
                     foreach (var stroke in pageAnnots.Strokes)
                     {
@@ -649,6 +748,61 @@ namespace Caelum.Services
                         }
                         inkListArray.Elements.Add(pointArray);
                         dict.Elements.Add("/InkList", inkListArray);
+
+                        AddAnnotationToPage(pdfPage, dict);
+                    }
+
+                    foreach (var highlight in pageAnnots.Highlights)
+                    {
+                        if (highlight.Rects.Count == 0) continue;
+
+                        var dict = new PdfDictionary(document);
+                        dict.Elements.SetName(PdfAnnotation.Keys.Subtype, "/Highlight");
+
+                        double minX = double.MaxValue, minY = double.MaxValue;
+                        double maxX = double.MinValue, maxY = double.MinValue;
+                        var quadPoints = new PdfArray();
+
+                        foreach (var rectInfo in highlight.Rects)
+                        {
+                            double x_ui = rectInfo[0];
+                            double y_ui = rectInfo[1];
+                            double w_ui = rectInfo[2];
+                            double h_ui = rectInfo[3];
+
+                            double x1 = x_ui / scale;
+                            double y1 = pageHeight - (y_ui / scale); // Top Y in PDF coords
+                            double x2 = (x_ui + w_ui) / scale;
+                            double y2 = pageHeight - ((y_ui + h_ui) / scale); // Bottom Y in PDF coords
+
+                            minX = Math.Min(minX, Math.Min(x1, x2));
+                            minY = Math.Min(minY, Math.Min(y1, y2));
+                            maxX = Math.Max(maxX, Math.Max(x1, x2));
+                            maxY = Math.Max(maxY, Math.Max(y1, y2));
+
+                            // QuadPoints: [TL.X, TL.Y, TR.X, TR.Y, BL.X, BL.Y, BR.X, BR.Y]
+                            quadPoints.Elements.Add(new PdfReal(x1));
+                            quadPoints.Elements.Add(new PdfReal(y1));
+                            quadPoints.Elements.Add(new PdfReal(x2));
+                            quadPoints.Elements.Add(new PdfReal(y1));
+                            quadPoints.Elements.Add(new PdfReal(x1));
+                            quadPoints.Elements.Add(new PdfReal(y2));
+                            quadPoints.Elements.Add(new PdfReal(x2));
+                            quadPoints.Elements.Add(new PdfReal(y2));
+                        }
+
+                        dict.Elements.SetRectangle(PdfAnnotation.Keys.Rect, new PdfSharpPdfRectangle(new XRect(minX, minY, maxX - minX, maxY - minY)));
+                        dict.Elements.Add("/QuadPoints", quadPoints);
+                        dict.Elements.SetString("/NM", $"wna_hl_{Guid.NewGuid()}");
+
+                        var colorArray = new PdfArray();
+                        colorArray.Elements.Add(new PdfReal(highlight.R / 255.0));
+                        colorArray.Elements.Add(new PdfReal(highlight.G / 255.0));
+                        colorArray.Elements.Add(new PdfReal(highlight.B / 255.0));
+                        dict.Elements.Add("/C", colorArray);
+
+                        if (highlight.A < 255)
+                            dict.Elements.SetReal("/CA", highlight.A / 255.0);
 
                         AddAnnotationToPage(pdfPage, dict);
                     }

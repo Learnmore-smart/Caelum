@@ -210,7 +210,7 @@
         <Grid x:Name="TabContentArea" Grid.Row="2"/>
 
         <Border x:Name="ToastBorder" Grid.Row="2" HorizontalAlignment="Center" VerticalAlignment="Bottom"
-                Margin="0,0,0,28" Visibility="Collapsed" Opacity="0" IsHitTestVisible="False"
+                Margin="0,0,0,80" Visibility="Collapsed" Opacity="0" IsHitTestVisible="False"
                 CornerRadius="10" Padding="20,10">
             <Border.Background>
                 <SolidColorBrush Color="#1A1A1A" Opacity="0.88"/>

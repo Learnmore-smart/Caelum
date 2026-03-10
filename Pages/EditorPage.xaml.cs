@@ -21,7 +21,7 @@ namespace Caelum.Pages
 {
     public sealed partial class EditorPage : Page
     {
-        private enum ToolType { None, Pen, Highlighter, Eraser, Text, Select }
+        private enum ToolType { None, Pen, Highlighter, Eraser, Text, Select, TextHighlight }
 
         private ToolType _currentTool = ToolType.None;
         private ToolType _previousTool = ToolType.Pen;
@@ -391,7 +391,7 @@ namespace Caelum.Pages
 
         private async void PageControl_PdfTextSelectionPointerPressed(object sender, PdfTextSelectionPointerEventArgs e)
         {
-            if (_currentTool != ToolType.None || sender is not PdfPageControl page)
+            if ((_currentTool != ToolType.None && _currentTool != ToolType.TextHighlight) || sender is not PdfPageControl page)
                 return;
 
             if (_selectedTextBox != null)
@@ -409,7 +409,7 @@ namespace Caelum.Pages
                     ? cachedTextInfo
                     : await _pdfService.GetPageTextInfoAsync(page.PageIndex);
 
-                if (requestId != _pdfTextSelectionRequestId || _currentTool != ToolType.None)
+                if (requestId != _pdfTextSelectionRequestId || (_currentTool != ToolType.None && _currentTool != ToolType.TextHighlight))
                     return;
 
                 int anchorOffset = FindNearestTextOffset(textInfo, e.Position, 24.0);
@@ -473,6 +473,20 @@ namespace Caelum.Pages
 
             if (!keepSelection)
             {
+                ClearPdfTextSelection();
+                return;
+            }
+
+            if (_currentTool == ToolType.TextHighlight)
+            {
+                int start = Math.Min(_pdfTextSelectionAnchorOffset, _pdfTextSelectionActiveOffset);
+                int end = Math.Max(_pdfTextSelectionAnchorOffset, _pdfTextSelectionActiveOffset);
+                var rects = BuildPdfTextSelectionRects(_pdfTextSelectionInfo, start, end);
+                if (rects.Count > 0)
+                {
+                    _pdfTextSelectionPage.AddHighlightAnnotation(rects, _highlighterColor);
+                    MarkDirty();
+                }
                 ClearPdfTextSelection();
                 return;
             }
@@ -733,6 +747,20 @@ namespace Caelum.Pages
             AnimateScroll(_targetVerticalOffset);
         }
 
+        private void CancelSmoothScroll()
+        {
+            if (_isScrollAnimating)
+            {
+                _isScrollAnimating = false;
+                System.Windows.Media.CompositionTarget.Rendering -= CompositionTarget_ScrollRendering;
+            }
+            if (_isHScrollAnimating)
+            {
+                _isHScrollAnimating = false;
+                System.Windows.Media.CompositionTarget.Rendering -= CompositionTarget_HScrollRendering;
+            }
+        }
+
         // 闁冲厜鍋撻柍鍏夊亾闁冲厜鍋?Zoom around a point (keeps that point stable on screen) 闁冲厜鍋撻柍鍏夊亾闁冲厜鍋?
         private void ZoomAroundPoint(double newZoom, Point viewportPoint)
         {
@@ -742,6 +770,7 @@ namespace Caelum.Pages
                 return;
             }
 
+            CancelSmoothScroll();
             double oldZoom = _zoomLevel;
 
             // Convert viewport point to content coordinates.
@@ -752,6 +781,7 @@ namespace Caelum.Pages
 
             Dispatcher.BeginInvoke(new Action(() =>
             {
+                CancelSmoothScroll();
                 double newOffsetX = Math.Max(0, contentX * _zoomLevel - viewportPoint.X);
                 double newOffsetY = Math.Max(0, contentY * _zoomLevel - viewportPoint.Y);
 
@@ -766,10 +796,9 @@ namespace Caelum.Pages
         // 闁冲厜鍋撻柍鍏夊亾闁冲厜鍋?Touch Manipulation (pinch-to-zoom + pan) 闁冲厜鍋撻柍鍏夊亾闁冲厜鍋?
         private void PdfScrollViewer_ManipulationStarting(object sender, ManipulationStartingEventArgs e)
         {
-            // Only handle multi-finger gestures (pinch-to-zoom, two-finger pan).
-            // Single-touch from M-Pencil (which some Huawei digitizers report as
-            // a touch device rather than stylus) must pass through to the InkCanvas.
-            if (_activeTouchCount < 2 && _currentTool != ToolType.None)
+            // Cancel manipulation if user is touching the toolbar — we don't want
+            // the ScrollViewer manipulation to swallow toolbar button taps.
+            if (e.OriginalSource is DependencyObject touchOrigin && IsDescendantOf(touchOrigin, ToolbarBorder))
             {
                 e.Cancel();
                 return;
@@ -795,6 +824,7 @@ namespace Caelum.Pages
             double panX = e.DeltaManipulation.Translation.X;
             double panY = e.DeltaManipulation.Translation.Y;
 
+            CancelSmoothScroll();
             PdfScrollViewer.ScrollToHorizontalOffset(PdfScrollViewer.HorizontalOffset - panX);
             PdfScrollViewer.ScrollToVerticalOffset(PdfScrollViewer.VerticalOffset - panY);
 
@@ -820,10 +850,16 @@ namespace Caelum.Pages
             _activeTouches[e.TouchDevice.Id] = pos;
             _activeTouchCount++;
 
+            // NOTE: PreviewTouchDown fires for FINGER touches only.
+            // The stylus/pen arrives via PreviewStylusDown, not TouchDown.
+            // So any touch event here is a finger — we can safely treat it as scroll input.
+            // When a drawing tool is active, the InkCanvas has IsHitTestVisible=true, which would
+            // swallow this event. By marking it Handled in this tunneling phase, we prevent InkCanvas
+            // from capturing it, allowing ManipulationDelta to handle single-finger panning.
+
             if (_activeTouches.Count == 2)
             {
-                // Second finger landed: start pinch-zoom tracking.
-                // Consume this touch so InkCanvas / manipulation don't get it.
+                // Second finger: always handle for pinch-zoom tracking
                 var pts = new List<Point>(_activeTouches.Values);
                 double dist = PinchDistance(pts[0], pts[1]);
                 if (dist > 10)
@@ -831,10 +867,20 @@ namespace Caelum.Pages
                     _pinchStartDistance = dist;
                     _pinchStartZoom = _zoomLevel;
                     _isPinchActive = true;
-                    e.Handled = true;
                 }
+                e.Handled = true; // Consume so InkCanvas doesn't see a second-finger stroke start
+            }
+            else if (_currentTool == ToolType.Pen ||
+                     _currentTool == ToolType.Highlighter ||
+                     _currentTool == ToolType.Eraser)
+            {
+                // Single finger touch while a drawing tool is active.
+                // Treat as scroll/pan gesture — do NOT let InkCanvas draw from finger input.
+                e.Handled = true;
             }
         }
+
+
 
         private void PdfScrollViewer_PreviewTouchMove(object sender, TouchEventArgs e)
         {
@@ -979,6 +1025,7 @@ namespace Caelum.Pages
         {
             if (_isPenScrolling && _currentTool == ToolType.None)
             {
+                CancelSmoothScroll();
                 Point currentPoint = e.GetPosition(PdfScrollViewer);
                 double deltaY = currentPoint.Y - _penScrollStartPoint.Y;
                 double deltaX = currentPoint.X - _penScrollStartPoint.X;
@@ -1104,6 +1151,8 @@ namespace Caelum.Pages
         /// </summary>
         private async void PdfScrollViewer_ScrollChanged(object sender, ScrollChangedEventArgs e)
         {
+            UpdatePageNumberIndicator();
+
             _scrollReRenderCts?.Cancel();
             _scrollReRenderCts = new CancellationTokenSource();
             var token = _scrollReRenderCts.Token;
@@ -1132,6 +1181,13 @@ namespace Caelum.Pages
 
                     if (needsZoomRender.Count > 0)
                         await ReRenderPagesAsync(needsZoomRender, _lastRenderedDpiScale, token);
+                }
+
+                if (_textBoxPopup != null && _textBoxPopup.IsOpen)
+                {
+                    var offset = _textBoxPopup.HorizontalOffset;
+                    _textBoxPopup.HorizontalOffset = offset + 0.001;
+                    _textBoxPopup.HorizontalOffset = offset;
                 }
             }
             catch (OperationCanceledException) { }
@@ -1295,7 +1351,7 @@ namespace Caelum.Pages
             // Highlighter popup — with size preview section
             Line hlSizePreview = null;
             _highlighterPopup = BuildToolPopup(
-                LocalizationService.Get("Editor.PopupSize"), 2, 20, _highlighterSize, 0.5,
+                LocalizationService.Get("Editor.PopupSize"), 2, 48, _highlighterSize, 0.5,
                 v => { _highlighterSize = v; if (hlSizePreview != null) hlSizePreview.StrokeThickness = v; if (_currentTool == ToolType.Highlighter) ApplyToolToAllPages(); },
                 LocalizationService.Get("Editor.PopupColor"), _highlighterColor,
                 c => { _highlighterColor = c; if (hlSizePreview != null) hlSizePreview.Stroke = new SolidColorBrush(Color.FromArgb(140, c.R, c.G, c.B)); UpdateToolIconColors(); if (_currentTool == ToolType.Highlighter) ApplyToolToAllPages(); });
@@ -1789,6 +1845,31 @@ namespace Caelum.Pages
             return popup;
         }
 
+        private void EditorPage_PreviewKeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.Key == Key.Delete || e.Key == Key.Back)
+            {
+                if (_currentTool == ToolType.Select && _activeSelectionPage != null && _activeSelectionPage.HasSelection)
+                {
+                    DeleteSelection();
+                    e.Handled = true;
+                }
+                else if (_currentTool == ToolType.Text && _selectedTextBox != null)
+                {
+                    if (string.IsNullOrEmpty(_selectedTextBox.Text) && e.Key == Key.Back)
+                    {
+                        DeleteSelectedTextBox();
+                        e.Handled = true;
+                    }
+                    else if (!_selectedTextBox.IsFocused)
+                    {
+                        DeleteSelectedTextBox();
+                        e.Handled = true;
+                    }
+                }
+            }
+        }
+
         private void EditorPage_PreviewMouseDown(object sender, MouseButtonEventArgs e)
         {
             if (ShouldClosePopupAndConsume(e.OriginalSource as DependencyObject))
@@ -2000,6 +2081,7 @@ namespace Caelum.Pages
                 if (!string.IsNullOrEmpty(_currentPdfPath))
                     await LoadAnnotationsFromPdfServiceAsync();
 
+                UpdatePageNumberIndicator();
                 SyncSelectableViewerFromCustomView();
             }
             catch (OperationCanceledException)
@@ -2117,6 +2199,8 @@ namespace Caelum.Pages
             ToggleToolButton(ToolType.Highlighter, HighlighterToolButton, _highlighterPopup);
         }
 
+
+
         private void EraserToolButton_Click(object sender, RoutedEventArgs e)
         {
             ToggleToolButton(ToolType.Eraser, EraserToolButton, _eraserPopup);
@@ -2131,6 +2215,8 @@ namespace Caelum.Pages
         {
             ToggleToolButton(ToolType.Select, SelectToolButton);
         }
+
+
 
         private void ActivateTool(ToolType tool)
         {
@@ -2150,7 +2236,6 @@ namespace Caelum.Pages
             EraserToolButton.IsChecked = tool == ToolType.Eraser;
             TextToolButton.IsChecked = tool == ToolType.Text;
             SelectToolButton.IsChecked = tool == ToolType.Select;
-
             _isUpdatingToolState = false;
 
             UpdateToolIconColors();
@@ -2174,10 +2259,13 @@ namespace Caelum.Pages
 
         private void ApplyToolToAllPages()
         {
+            bool enablePressure = AppSettingsService.Load().EnablePressure;
+
             foreach (var page in _pageControls)
             {
+                page.PressureEnabled = enablePressure;
                 page.SetMode(_currentTool == ToolType.Text);
-                page.SetPdfTextSelectionEnabled(_currentTool == ToolType.None);
+                page.SetPdfTextSelectionEnabled(_currentTool == ToolType.None || _currentTool == ToolType.TextHighlight);
                 page.SetSelectionMode(_currentTool == ToolType.Select);
                 page.SetSelectionFilter(_selectionFilter);
                 page.SetSelectionShape(_selectionShape);
@@ -2217,6 +2305,39 @@ namespace Caelum.Pages
 
                 page.SetEraserSize(_eraserSize);
             }
+        }
+
+        private void UpdatePageNumberIndicator()
+        {
+            if (PageNumberText == null) return;
+
+            if (_pageControls.Count == 0)
+            {
+                PageNumberText.Text = "0 / 0";
+                return;
+            }
+
+            double viewportHeight = PdfScrollViewer.ViewportHeight;
+            if (viewportHeight <= 0)
+            {
+                PageNumberText.Text = $"1 / {_pageControls.Count}";
+                return;
+            }
+
+            double centerOffset = PdfScrollViewer.VerticalOffset + (viewportHeight / 2);
+            int currentPageIndex = 0;
+
+            for (int i = 0; i < _pageControls.Count; i++)
+            {
+                double pageTop = GetScaledPageTop(i);
+                if (pageTop > centerOffset)
+                {
+                    break;
+                }
+                currentPageIndex = i;
+            }
+
+            PageNumberText.Text = $"{currentPageIndex + 1} / {_pageControls.Count}";
         }
 
         private async void Back_Click(object sender, RoutedEventArgs e)
@@ -2381,51 +2502,89 @@ namespace Caelum.Pages
             };
             colorButton.Template = CreateIconButtonTemplate("#E8E8E8", "#DCDCDC");
             var colorPopup = new Popup { Placement = PlacementMode.Bottom, StaysOpen = false, AllowsTransparency = true };
-            var colorPanel = new WrapPanel { Margin = new Thickness(10), Width = 210 };
-            var colorBorder = new Border
+            
+            int cols = 12;
+            int rows = 8;
+            double cellSize = 20;
+            var paletteGrid = new Grid { Width = cols * cellSize, Height = rows * cellSize, ClipToBounds = true };
+
+            var selectionIndicator = new Border
+            {
+                Width = cellSize, Height = cellSize,
+                BorderBrush = Brushes.White, BorderThickness = new Thickness(2),
+                Background = Brushes.Transparent, IsHitTestVisible = false,
+                Visibility = Visibility.Collapsed, HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Top
+            };
+
+            for (int row = 0; row < rows; row++)
+            {
+                for (int col = 0; col < cols; col++)
+                {
+                    Color cellColor;
+                    if (row == 0)
+                    {
+                        byte gray = (byte)(col * 255 / (cols - 1));
+                        cellColor = Color.FromRgb(gray, gray, gray);
+                    }
+                    else
+                    {
+                        double hue = col * 360.0 / cols;
+                        double saturation = row <= rows / 2 ? (double)row / (rows / 2) : 1.0;
+                        double val = row <= rows / 2 ? 1.0 : 1.0 - (double)(row - rows / 2) / (rows / 2);
+                        cellColor = HsvToColor(hue, saturation, val);
+                    }
+
+                    var cell = new Border
+                    {
+                        Width = cellSize, Height = cellSize,
+                        Background = new SolidColorBrush(cellColor),
+                        HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Top,
+                        Margin = new Thickness(col * cellSize, row * cellSize, 0, 0),
+                        Cursor = Cursors.Hand, Tag = cellColor
+                    };
+
+                    cell.MouseLeftButtonDown += (s, ev) =>
+                    {
+                        var b = s as Border;
+                        var picked = (Color)b.Tag;
+                        selectionIndicator.Margin = b.Margin;
+                        selectionIndicator.Visibility = Visibility.Visible;
+                        if (_selectedTextBox != null)
+                        {
+                            _selectedTextBox.Foreground = new SolidColorBrush(picked);
+                            _textColor = picked;
+                            _colorIndicator.Background = new SolidColorBrush(picked);
+                            MarkDirty();
+                        }
+                        colorPopup.IsOpen = false;
+                        ev.Handled = true;
+                    };
+
+                    paletteGrid.Children.Add(cell);
+                }
+            }
+
+            foreach (Border cell in paletteGrid.Children)
+            {
+                if (cell.Tag is Color c && c == _textColor)
+                {
+                    selectionIndicator.Margin = cell.Margin;
+                    selectionIndicator.Visibility = Visibility.Visible;
+                    break;
+                }
+            }
+
+            paletteGrid.Children.Add(selectionIndicator);
+
+            colorPopup.Child = new Border
             {
                 Background = new SolidColorBrush(Color.FromArgb(245, 255, 255, 255)),
                 BorderBrush = new SolidColorBrush(Color.FromArgb(20, 0, 0, 0)),
                 BorderThickness = new Thickness(1),
                 CornerRadius = new CornerRadius(12),
-                Child = colorPanel,
+                Child = new StackPanel { Margin = new Thickness(16), Children = { paletteGrid } },
                 Effect = new System.Windows.Media.Effects.DropShadowEffect { BlurRadius = 20, ShadowDepth = 4, Opacity = 0.14, Color = Colors.Black }
             };
-
-            var textColors = new[] { Colors.Black, Colors.White, Color.FromRgb(220, 38, 38), Color.FromRgb(37, 99, 235), Color.FromRgb(22, 163, 74), Color.FromRgb(245, 158, 11), Color.FromRgb(147, 51, 234), Color.FromRgb(127, 29, 29), Color.FromRgb(14, 116, 144), Color.FromRgb(161, 98, 7) };
-            foreach (var c in textColors)
-            {
-                var isLight = c.R > 220 && c.G > 220 && c.B > 220;
-                var swatch = new Border
-                {
-                    Width = 26,
-                    Height = 26,
-                    CornerRadius = new CornerRadius(13),
-                    Background = new SolidColorBrush(c),
-                    Margin = new Thickness(3),
-                    Cursor = Cursors.Hand,
-                    Tag = c,
-                    BorderBrush = isLight ? new SolidColorBrush(Color.FromArgb(40, 0, 0, 0)) : Brushes.Transparent,
-                    BorderThickness = new Thickness(isLight ? 1.5 : 0)
-                };
-                swatch.MouseLeftButtonDown += (s, e) =>
-                {
-                    if (_selectedTextBox != null)
-                    {
-                        var sw = s as Border;
-                        var selectedColor = (Color)sw.Tag;
-                        _selectedTextBox.Foreground = new SolidColorBrush(selectedColor);
-                        _textColor = selectedColor;
-                        _colorIndicator.Background = new SolidColorBrush(selectedColor);
-                        MarkDirty();
-                    }
-                    colorPopup.IsOpen = false;
-                    e.Handled = true;
-                };
-                colorPanel.Children.Add(swatch);
-            }
-
-            colorPopup.Child = colorBorder;
             colorButton.Click += (s, e) =>
             {
                 colorPopup.PlacementTarget = colorButton;
@@ -2478,6 +2637,11 @@ namespace Caelum.Pages
 
         private void SelectTextBox(TextBox textBox)
         {
+            // Auto-switch to Text tool when clicking on an existing textbox,
+            // regardless of the currently active tool.
+            if (_currentTool != ToolType.Text)
+                ActivateTool(ToolType.Text);
+
             if (_selectedTextBox != null && _selectedTextBox != textBox)
             {
                 ApplyTextBoxChrome(_selectedTextBox, isSelected: false);
@@ -2488,10 +2652,15 @@ namespace Caelum.Pages
             textBox.IsReadOnly = false;
             ApplyTextBoxChrome(textBox, isSelected: true);
             SyncPopupToSelectedTextBox();
+
+            // Close then reopen so WPF repositions the popup to the new target.
+            // Simply changing PlacementTarget while the popup is open doesn't move it.
+            _textBoxPopup.IsOpen = false;
             _textBoxPopup.PlacementTarget = textBox.Parent as UIElement ?? textBox;
             _textBoxPopup.IsOpen = true;
             textBox.Focus();
         }
+
 
         private void DeselectTextBox()
         {
@@ -2563,6 +2732,7 @@ namespace Caelum.Pages
             if (_selectedTextBox != null)
             {
                 DeselectTextBox();
+                return; // Clicking outside simply deselects and stops
             }
 
             CreateTextBox(page, point, alignToPointer: true);
@@ -2656,15 +2826,19 @@ namespace Caelum.Pages
             textBox.TextChanged += (s, e) => MarkDirty();
             textBox.PreviewMouseLeftButtonDown += (s, e) =>
             {
-                if (_currentTool == ToolType.Text)
-                {
-                    SelectTextBox((TextBox)s);
-                }
+                // Only intercept clicks that land directly on the textbox itself.
+                // If the original source is not inside the textbox's own visual tree exclude
+                // toolbar and popup hits so Undo/Redo buttons remain clickable.
+                if (e.OriginalSource is DependencyObject src && IsDescendantOf(src, ToolbarBorder))
+                    return; // Let toolbar buttons handle their own clicks
+
+                // Allow clicking the textbox to select/edit it, regardless of active tool
+                SelectTextBox((TextBox)s);
+                e.Handled = true; // Prevent click from bubbling to Canvas
             };
             textBox.GotFocus += (s, e) =>
             {
-                if (_currentTool == ToolType.Text)
-                    SelectTextBox((TextBox)s);
+                SelectTextBox((TextBox)s);
             };
 
             page.TextOverlay.Children.Add(container);
@@ -2821,6 +2995,7 @@ namespace Caelum.Pages
             {
                 var pa = new PageAnnotation();
                 pa.Strokes = page.GetStrokeData();
+                pa.Highlights = page.GetHighlights().ToList();
 
                 foreach (var element in page.TextOverlay.Children)
                 {
@@ -2851,7 +3026,7 @@ namespace Caelum.Pages
                     }
                 }
 
-                if (pa.Strokes.Count > 0 || pa.Texts.Count > 0)
+                if (pa.Strokes.Count > 0 || pa.Texts.Count > 0 || pa.Highlights.Count > 0)
                     annotations[page.PageIndex] = pa;
             }
             return annotations;
@@ -2881,6 +3056,11 @@ namespace Caelum.Pages
                         {
                             var color = Color.FromRgb(ta.R, ta.G, ta.B);
                             CreateTextBox(page, new Point(ta.X, ta.Y), color: color, fontSize: ta.FontSize, text: ta.Text, select: false);
+                        }
+
+                        foreach (var hl in pa.Highlights)
+                        {
+                            page.AddHighlight(hl);
                         }
                     }
                 }
