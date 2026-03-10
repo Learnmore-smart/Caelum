@@ -496,7 +496,9 @@ $RECYCLE.BIN/
 
 # Build Logs
 build*.log
+build*.txt
 build_log.txt
+*.bak
 
 # Local .NET tooling state
 .dotnet-cli/
