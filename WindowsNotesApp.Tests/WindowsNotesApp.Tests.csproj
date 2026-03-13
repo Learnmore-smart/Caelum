@@ -23,7 +23,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\WindowsNotesApp.csproj" />
+    <ProjectReference Include="..\Caelum.csproj" />
   </ItemGroup>
 
 </Project>

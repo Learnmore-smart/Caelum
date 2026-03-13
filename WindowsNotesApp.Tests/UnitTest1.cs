@@ -1,7 +1,7 @@
-﻿using WindowsNotesApp.Models;
-using WindowsNotesApp.Services;
+using Caelum.Models;
+using Caelum.Services;
 
-namespace WindowsNotesApp.Tests;
+namespace Caelum.Tests;
 
 public class LocalizationServiceTests
 {

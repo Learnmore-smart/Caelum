@@ -189,8 +189,23 @@
                 <Border Width="1" Background="#18000000" Margin="4,8"/>
 
                 <!-- Page Number -->
-                <TextBlock x:Name="PageNumberText" Text="0 / 0" FontSize="13" Foreground="#555" 
-                           VerticalAlignment="Center" Margin="8,0,8,0" ToolTip="Current Page"/>
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="8,0,8,0">
+                    <Grid Width="46" Height="24">
+                        <TextBlock x:Name="PageNumberLabel" Text="0" FontSize="13" Foreground="#555"
+                                   VerticalAlignment="Center" HorizontalAlignment="Center" TextAlignment="Center"
+                                   MouseLeftButtonDown="PageNumberLabel_MouseLeftButtonDown"
+                                   Cursor="Hand" ToolTip="Click to jump to page"/>
+                        <TextBox x:Name="PageNumberTextBox" FontSize="12" Foreground="#333" Background="#EEFFFFFF"
+                                 VerticalAlignment="Center" HorizontalAlignment="Center"
+                                 Width="42" Height="22" TextAlignment="Center" Padding="2,1"
+                                 BorderThickness="1" BorderBrush="#0078D4"
+                                 Visibility="Collapsed"
+                                 KeyDown="PageNumberTextBox_KeyDown"
+                                 LostFocus="PageNumberTextBox_LostFocus"/>
+                    </Grid>
+                    <TextBlock x:Name="PageCountText" Text="/ 0" FontSize="13" Foreground="#555"
+                               VerticalAlignment="Center" Margin="2,0,0,0"/>
+                </StackPanel>
 
                 <!-- Separator -->
                 <Border Width="1" Background="#18000000" Margin="4,8"/>

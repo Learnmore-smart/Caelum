@@ -193,15 +193,15 @@
             </Grid>
         </Border>
 
-        <Border Grid.Row="1" Background="#F3F4F6" Padding="6,6,6,6">
-            <ScrollViewer Height="40" HorizontalScrollBarVisibility="Hidden" VerticalScrollBarVisibility="Disabled">
+        <Border Grid.Row="1" Background="#F7F8FA" Padding="8,4,8,4">
+            <ScrollViewer Height="32" HorizontalScrollBarVisibility="Hidden" VerticalScrollBarVisibility="Disabled">
                 <StackPanel Orientation="Horizontal">
                     <StackPanel x:Name="TabBar" Orientation="Horizontal"/>
                     <Button x:Name="NewTabButton" Click="NewTab_Click" Style="{StaticResource NavButtonStyle}"
                             VerticalAlignment="Center"
-                            Width="40" Height="40" Margin="4,0,0,0"
+                            Width="32" Height="32" Margin="6,0,0,0"
                             ToolTip="">
-                        <TextBlock Text="&#xE710;" FontFamily="Segoe MDL2 Assets" FontSize="16" Foreground="#555"/>
+                        <TextBlock Text="&#xE710;" FontFamily="Segoe MDL2 Assets" FontSize="14" Foreground="#555"/>
                     </Button>
                 </StackPanel>
             </ScrollViewer>

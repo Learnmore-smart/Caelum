@@ -231,25 +231,33 @@ namespace Caelum
         private Border CreateTabButton(AppTab tab)
         {
             bool isActive = tab == _activeTab;
+            var activeForeground = new SolidColorBrush(Color.FromRgb(31, 41, 55));
+            var inactiveForeground = new SolidColorBrush(Color.FromRgb(107, 114, 128));
+            var activeCloseForeground = new SolidColorBrush(Color.FromRgb(75, 85, 99));
+            var inactiveCloseForeground = new SolidColorBrush(Color.FromRgb(156, 163, 175));
+            var activeBackground = new SolidColorBrush(Color.FromRgb(255, 255, 255));
+            var hoverBackground = new SolidColorBrush(Color.FromArgb(18, 17, 24, 39));
+            var transparentBackground = Brushes.Transparent;
+            var activeBorderBrush = new SolidColorBrush(Color.FromArgb(18, 17, 24, 39));
 
             // Tab content: icon + title + close button
             var icon = new TextBlock
             {
                 Text = tab.Icon,
                 FontFamily = new FontFamily("Segoe MDL2 Assets"),
-                FontSize = 14,
-                Foreground = new SolidColorBrush(isActive ? Color.FromRgb(30, 30, 30) : Color.FromRgb(120, 120, 120)),
+                FontSize = 13,
+                Foreground = isActive ? activeForeground : inactiveForeground,
                 VerticalAlignment = VerticalAlignment.Center,
-                Margin = new Thickness(0, 0, 8, 0)
+                Margin = new Thickness(0, 0, 6, 0)
             };
 
             var title = new TextBlock
             {
                 Text = tab.Title.Length > 20 ? tab.Title.Substring(0, 17) + "..." : tab.Title,
-                FontSize = 14,
-                Foreground = new SolidColorBrush(isActive ? Color.FromRgb(30, 30, 30) : Color.FromRgb(120, 120, 120)),
+                FontSize = 13,
+                Foreground = isActive ? activeForeground : inactiveForeground,
                 VerticalAlignment = VerticalAlignment.Center,
-                MaxWidth = 150,
+                MaxWidth = 132,
                 TextTrimming = TextTrimming.CharacterEllipsis,
                 FontWeight = isActive ? FontWeights.Medium : FontWeights.Normal
             };
@@ -260,25 +268,26 @@ namespace Caelum
                 {
                     Text = "\uE8BB",
                     FontFamily = new FontFamily("Segoe MDL2 Assets"),
-                    FontSize = 11,
-                    Foreground = new SolidColorBrush(isActive ? Color.FromRgb(80, 80, 80) : Color.FromRgb(150, 150, 150))
+                    FontSize = 10,
+                    Foreground = isActive ? activeCloseForeground : inactiveCloseForeground
                 },
-                Width = 24,
-                Height = 24,
-                Background = Brushes.Transparent,
+                Width = 20,
+                Height = 20,
+                Background = transparentBackground,
                 BorderThickness = new Thickness(0),
                 Cursor = Cursors.Hand,
-                Margin = new Thickness(8, 0, 0, 0),
+                Margin = new Thickness(6, 0, 0, 0),
                 VerticalAlignment = VerticalAlignment.Center,
                 Visibility = _tabs.Count > 1 ? Visibility.Visible : Visibility.Collapsed,
+                Opacity = isActive ? 1 : 0.72,
                 ToolTip = LocalizationService.Get("Main.CloseTabTooltip")
             };
 
             // Close button template with hover
             var closeBtnTemplate = new ControlTemplate(typeof(Button));
             var closeBorder = new FrameworkElementFactory(typeof(Border));
-            closeBorder.SetValue(Border.BackgroundProperty, Brushes.Transparent);
-            closeBorder.SetValue(Border.CornerRadiusProperty, new CornerRadius(6));
+            closeBorder.SetValue(Border.BackgroundProperty, transparentBackground);
+            closeBorder.SetValue(Border.CornerRadiusProperty, new CornerRadius(5));
             closeBorder.Name = "CloseBg";
             var closeContent = new FrameworkElementFactory(typeof(ContentPresenter));
             closeContent.SetValue(ContentPresenter.HorizontalAlignmentProperty, HorizontalAlignment.Center);
@@ -287,7 +296,7 @@ namespace Caelum
             closeBtnTemplate.VisualTree = closeBorder;
 
             var hoverTrigger = new Trigger { Property = UIElement.IsMouseOverProperty, Value = true };
-            hoverTrigger.Setters.Add(new Setter(Border.BackgroundProperty, new SolidColorBrush(Color.FromArgb(20, 0, 0, 0)), "CloseBg"));
+            hoverTrigger.Setters.Add(new Setter(Border.BackgroundProperty, new SolidColorBrush(Color.FromArgb(18, 17, 24, 39)), "CloseBg"));
             closeBtnTemplate.Triggers.Add(hoverTrigger);
 
             closeBtn.Template = closeBtnTemplate;
@@ -298,7 +307,8 @@ namespace Caelum
             var panel = new StackPanel
             {
                 Orientation = Orientation.Horizontal,
-                Margin = new Thickness(14, 0, 10, 0)
+                Margin = new Thickness(10, 0, 8, 0),
+                VerticalAlignment = VerticalAlignment.Center
             };
             panel.Children.Add(icon);
             panel.Children.Add(title);
@@ -307,35 +317,35 @@ namespace Caelum
             var border = new Border
             {
                 Child = panel,
-                Background = new SolidColorBrush(isActive ? Color.FromRgb(255, 255, 255) : Color.FromArgb(0, 255, 255, 255)),
-                CornerRadius = new CornerRadius(16),
-                Margin = new Thickness(2, 2, 2, 2),
-                Padding = new Thickness(2, 6, 2, 6),
+                Background = isActive ? activeBackground : transparentBackground,
+                BorderBrush = isActive ? activeBorderBrush : transparentBackground,
+                BorderThickness = isActive ? new Thickness(1) : new Thickness(0),
+                CornerRadius = new CornerRadius(10),
+                Margin = new Thickness(0, 0, 4, 0),
+                Height = 32,
+                MinWidth = 72,
                 Cursor = Cursors.Hand,
-                BorderThickness = new Thickness(0)
-            };
-
-            if (isActive)
-            {
-                border.Effect = new DropShadowEffect
-                {
-                    BlurRadius = 16,
-                    ShadowDepth = 0,
-                    Opacity = 0.08,
-                    Color = Color.FromRgb(0, 0, 0)
-                };
+                SnapsToDevicePixels = true
             }
 
             border.MouseEnter += (s, e) =>
             {
-                if (!isActive)
-                    border.Background = new SolidColorBrush(Color.FromRgb(248, 250, 252));
+                if (capturedTab != _activeTab)
+                {
+                    border.Background = hoverBackground;
+                }
+
+                closeBtn.Opacity = 1;
             };
 
             border.MouseLeave += (s, e) =>
             {
-                if (!isActive)
-                    border.Background = new SolidColorBrush(Color.FromArgb(0, 255, 255, 255));
+                if (capturedTab != _activeTab)
+                {
+                    border.Background = transparentBackground;
+                }
+
+                closeBtn.Opacity = capturedTab == _activeTab ? 1 : 0.72;
             };
 
             border.MouseLeftButtonDown += (s, e) => ActivateTab(capturedTab);
@@ -665,7 +675,6 @@ namespace Caelum
         }
     }
 }
-
 
 
 

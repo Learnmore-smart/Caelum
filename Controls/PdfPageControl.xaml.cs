@@ -786,9 +786,12 @@ namespace Caelum.Controls
 
         public void SetMode(bool isTextMode)
         {
-            // Always keep TextOverlayCanvas hit-testable so textboxes can be clicked in any tool mode.
-            // Its background is transparent, so non-textbox clicks fall through to InkCanvas below.
+            // Keep hit testing enabled so existing textboxes remain selectable in any mode.
             TextOverlayCanvas.IsHitTestVisible = true;
+
+            // In text mode, capture clicks on empty overlay space so EditorPage can create new textboxes.
+            // In other modes, clear the canvas background so empty-area clicks pass through to InkCanvas.
+            TextOverlayCanvas.Background = isTextMode ? Brushes.Transparent : null;
         }
 
         public void SetPdfTextSelectionEnabled(bool enabled)

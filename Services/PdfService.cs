@@ -1,8 +1,11 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
+using System.Net;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
@@ -29,6 +32,15 @@ namespace Caelum.Services
         private Stream _pdfBackingStream;
         private string _sourceFilePath;
         private readonly Dictionary<int, PdfPageTextInfo> _pageTextInfoCache = new Dictionary<int, PdfPageTextInfo>();
+        private static readonly Regex RichTextBreakRegex = new Regex(@"<\s*br\s*/?\s*>|<\s*/p\s*>", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        private static readonly Regex RichTextTagRegex = new Regex(@"<[^>]+>", RegexOptions.Compiled);
+        private static readonly Regex DefaultAppearanceFontSizeRegex = new Regex(@"(?<size>[+-]?\d+(?:\.\d+)?)\s+Tf\b", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        private static readonly Regex DefaultAppearanceRgbRegex = new Regex(@"(?<r>[+-]?\d*\.?\d+)\s+(?<g>[+-]?\d*\.?\d+)\s+(?<b>[+-]?\d*\.?\d+)\s+rg\b", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        private static readonly Regex DefaultAppearanceGrayRegex = new Regex(@"(?<gray>[+-]?\d*\.?\d+)\s+g\b", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        private static readonly Regex CssFontSizeRegex = new Regex(@"font-size\s*:\s*(?<size>[+-]?\d+(?:\.\d+)?)\s*(?<unit>pt|px)?", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        private static readonly Regex CssFontRegex = new Regex(@"font\s*:[^;]*?(?<size>[+-]?\d+(?:\.\d+)?)\s*(?<unit>pt|px)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        private static readonly Regex CssHexColorRegex = new Regex(@"color\s*:\s*(?<value>#[0-9a-f]{3}|#[0-9a-f]{6})\b", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        private static readonly Regex CssRgbColorRegex = new Regex(@"color\s*:\s*rgb\s*\(\s*(?<r>\d{1,3})\s*,\s*(?<g>\d{1,3})\s*,\s*(?<b>\d{1,3})\s*\)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
         private sealed class LoadedPdfDocument
         {
@@ -273,44 +285,17 @@ namespace Caelum.Services
 
                             if (subtype == "/FreeText")
                             {
-                                var contents = dict.Elements.GetString("/Contents") ?? "";
-                                var rect = dict.Elements.GetRectangle("/Rect");
-
-                                double x_ui = rect.X1 * scale;
-                                double w_ui = rect.Width * scale;
-                                double h_ui = rect.Height * scale;
-                                double y_ui = (pageHeight - rect.Y1 - rect.Height) * scale;
-
-                                double fontSize = 18;
-                                byte r = 0, g = 0, b = 0;
-                                string da = dict.Elements.GetString("/DA") ?? "";
-                                var parts = da.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-                                for (int j = 0; j < parts.Length; j++)
+                                var textAnnotation = TryExtractFreeTextAnnotation(dict, pageHeight, scale);
+                                if (textAnnotation != null)
                                 {
-                                    if (parts[j] == "Tf" && j >= 1 && double.TryParse(parts[j-1], out double fs))
-                                        fontSize = fs * scale;
-                                    if (parts[j] == "rg" && j >= 3)
-                                    {
-                                        if (double.TryParse(parts[j-3], out double rD)) r = (byte)(rD * 255);
-                                        if (double.TryParse(parts[j-2], out double gD)) g = (byte)(gD * 255);
-                                        if (double.TryParse(parts[j-1], out double bD)) b = (byte)(bD * 255);
-                                    }
+                                    pageAnnots.Texts.Add(textAnnotation);
+                                    elementsToRemove.Add(annotItem);
                                 }
-
-                                pageAnnots.Texts.Add(new Models.TextAnnotation
-                                {
-                                    Text = contents,
-                                    X = x_ui,
-                                    Y = y_ui,
-                                    FontSize = fontSize,
-                                    R = r, G = g, B = b
-                                });
-
-                                elementsToRemove.Add(annotItem);
                             }
                             else if (subtype == "/Ink")
                             {
                                 var inkList = dict.Elements.GetArray("/InkList");
+                                bool extractedInk = false;
                                 if (inkList != null && inkList.Elements.Count > 0)
                                 {
                                     foreach (var strokeItem in inkList.Elements)
@@ -343,11 +328,15 @@ namespace Caelum.Services
                                             }
 
                                             if (strokeAnnot.Points.Count > 0)
+                                            {
                                                 pageAnnots.Strokes.Add(strokeAnnot);
+                                                extractedInk = true;
+                                            }
                                         }
                                     }
                                 }
-                                elementsToRemove.Add(annotItem);
+                                if (extractedInk)
+                                    elementsToRemove.Add(annotItem);
                             }
                             else if (subtype == "/Highlight")
                             {
@@ -389,9 +378,11 @@ namespace Caelum.Services
                                     }
 
                                     if (highlightAnnot.Rects.Count > 0)
+                                    {
                                         pageAnnots.Highlights.Add(highlightAnnot);
+                                        elementsToRemove.Add(annotItem);
+                                    }
                                 }
-                                elementsToRemove.Add(annotItem);
                             }
                         }
                     }
@@ -854,6 +845,210 @@ namespace Caelum.Services
                 page.Elements.Add("/Annots", annots);
             }
             annots.Elements.Add(annotation.Reference);
+        }
+
+        internal static Models.TextAnnotation TryExtractFreeTextAnnotation(PdfDictionary dict, double pageHeight, double scale)
+        {
+            if (dict == null)
+                return null;
+
+            var rect = dict.Elements.GetRectangle("/Rect");
+            string text = ExtractAnnotationText(dict);
+            if (string.IsNullOrWhiteSpace(text))
+                return null;
+
+            var annotation = new Models.TextAnnotation
+            {
+                Text = text,
+                X = rect.X1 * scale,
+                Y = (pageHeight - rect.Y1 - rect.Height) * scale,
+                FontSize = 18,
+                R = 0,
+                G = 0,
+                B = 0
+            };
+
+            if (TryExtractFontSizeFromDefaultAppearance(dict.Elements.GetString("/DA"), scale, out var fontSizeFromDa))
+                annotation.FontSize = fontSizeFromDa;
+            else if (TryExtractFontSizeFromStyleString(dict.Elements.GetString("/DS"), scale, out var fontSizeFromStyle))
+                annotation.FontSize = fontSizeFromStyle;
+            else if (TryExtractFontSizeFromStyleString(dict.Elements.GetString("/RC"), scale, out var fontSizeFromRichText))
+                annotation.FontSize = fontSizeFromRichText;
+
+            if (TryExtractColorFromDefaultAppearance(dict.Elements.GetString("/DA"), out var r, out var g, out var b) ||
+                TryExtractColorFromStyleString(dict.Elements.GetString("/DS"), out r, out g, out b) ||
+                TryExtractColorFromStyleString(dict.Elements.GetString("/RC"), out r, out g, out b) ||
+                TryExtractColorFromArray(dict.Elements.GetArray("/C"), out r, out g, out b))
+            {
+                annotation.R = r;
+                annotation.G = g;
+                annotation.B = b;
+            }
+
+            return annotation;
+        }
+
+        private static string ExtractAnnotationText(PdfDictionary dict)
+        {
+            string contents = NormalizeAnnotationText(dict.Elements.GetString("/Contents"));
+            if (!string.IsNullOrWhiteSpace(contents))
+                return contents;
+
+            string richText = NormalizeAnnotationText(ConvertRichTextToPlainText(dict.Elements.GetString("/RC")));
+            if (!string.IsNullOrWhiteSpace(richText))
+                return richText;
+
+            return NormalizeAnnotationText(dict.Elements.GetString("/V"));
+        }
+
+        private static string ConvertRichTextToPlainText(string richText)
+        {
+            if (string.IsNullOrWhiteSpace(richText))
+                return string.Empty;
+
+            string normalized = RichTextBreakRegex.Replace(richText, "\n");
+            normalized = RichTextTagRegex.Replace(normalized, string.Empty);
+            return WebUtility.HtmlDecode(normalized).Trim();
+        }
+
+        private static string NormalizeAnnotationText(string text)
+        {
+            if (string.IsNullOrEmpty(text))
+                return string.Empty;
+
+            return text
+                .Replace("\r\n", "\n")
+                .Replace('\r', '\n')
+                .Trim('\0');
+        }
+
+        private static bool TryExtractFontSizeFromDefaultAppearance(string defaultAppearance, double scale, out double fontSize)
+        {
+            fontSize = 0;
+            if (string.IsNullOrWhiteSpace(defaultAppearance))
+                return false;
+
+            var match = DefaultAppearanceFontSizeRegex.Match(defaultAppearance);
+            if (!match.Success)
+                return false;
+
+            if (!TryParseInvariantDouble(match.Groups["size"].Value, out var parsed))
+                return false;
+
+            fontSize = parsed * scale;
+            return fontSize > 0;
+        }
+
+        private static bool TryExtractFontSizeFromStyleString(string styleText, double scale, out double fontSize)
+        {
+            fontSize = 0;
+            if (string.IsNullOrWhiteSpace(styleText))
+                return false;
+
+            var match = CssFontSizeRegex.Match(styleText);
+            if (!match.Success)
+                match = CssFontRegex.Match(styleText);
+
+            if (!match.Success || !TryParseInvariantDouble(match.Groups["size"].Value, out var parsed))
+                return false;
+
+            string unit = match.Groups["unit"].Value;
+            fontSize = string.Equals(unit, "px", StringComparison.OrdinalIgnoreCase)
+                ? parsed
+                : parsed * scale;
+            return fontSize > 0;
+        }
+
+        private static bool TryExtractColorFromDefaultAppearance(string defaultAppearance, out byte r, out byte g, out byte b)
+        {
+            r = g = b = 0;
+            if (string.IsNullOrWhiteSpace(defaultAppearance))
+                return false;
+
+            var rgbMatch = DefaultAppearanceRgbRegex.Match(defaultAppearance);
+            if (rgbMatch.Success &&
+                TryParseInvariantDouble(rgbMatch.Groups["r"].Value, out var red) &&
+                TryParseInvariantDouble(rgbMatch.Groups["g"].Value, out var green) &&
+                TryParseInvariantDouble(rgbMatch.Groups["b"].Value, out var blue))
+            {
+                r = ToByte(red * 255.0);
+                g = ToByte(green * 255.0);
+                b = ToByte(blue * 255.0);
+                return true;
+            }
+
+            var grayMatch = DefaultAppearanceGrayRegex.Match(defaultAppearance);
+            if (!grayMatch.Success || !TryParseInvariantDouble(grayMatch.Groups["gray"].Value, out var gray))
+                return false;
+
+            byte value = ToByte(gray * 255.0);
+            r = value;
+            g = value;
+            b = value;
+            return true;
+        }
+
+        private static bool TryExtractColorFromStyleString(string styleText, out byte r, out byte g, out byte b)
+        {
+            r = g = b = 0;
+            if (string.IsNullOrWhiteSpace(styleText))
+                return false;
+
+            var rgbMatch = CssRgbColorRegex.Match(styleText);
+            if (rgbMatch.Success &&
+                byte.TryParse(rgbMatch.Groups["r"].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out r) &&
+                byte.TryParse(rgbMatch.Groups["g"].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out g) &&
+                byte.TryParse(rgbMatch.Groups["b"].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out b))
+            {
+                return true;
+            }
+
+            var hexMatch = CssHexColorRegex.Match(styleText);
+            if (!hexMatch.Success)
+                return false;
+
+            return TryParseHexColor(hexMatch.Groups["value"].Value, out r, out g, out b);
+        }
+
+        private static bool TryExtractColorFromArray(PdfArray colorArray, out byte r, out byte g, out byte b)
+        {
+            r = g = b = 0;
+            if (colorArray == null || colorArray.Elements.Count < 3)
+                return false;
+
+            r = ToByte(GetDouble(colorArray.Elements[0]) * 255.0);
+            g = ToByte(GetDouble(colorArray.Elements[1]) * 255.0);
+            b = ToByte(GetDouble(colorArray.Elements[2]) * 255.0);
+            return true;
+        }
+
+        private static bool TryParseHexColor(string colorText, out byte r, out byte g, out byte b)
+        {
+            r = g = b = 0;
+            if (string.IsNullOrWhiteSpace(colorText) || colorText[0] != '#')
+                return false;
+
+            string hex = colorText.Substring(1);
+            if (hex.Length == 3)
+                hex = string.Concat(hex.Select(ch => new string(ch, 2)));
+
+            if (hex.Length != 6)
+                return false;
+
+            return
+                byte.TryParse(hex.Substring(0, 2), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out r) &&
+                byte.TryParse(hex.Substring(2, 2), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out g) &&
+                byte.TryParse(hex.Substring(4, 2), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out b);
+        }
+
+        private static bool TryParseInvariantDouble(string rawValue, out double value)
+        {
+            return double.TryParse(rawValue, NumberStyles.Float, CultureInfo.InvariantCulture, out value);
+        }
+
+        private static byte ToByte(double value)
+        {
+            return (byte)Math.Max(0, Math.Min(255, Math.Round(value)));
         }
 
         private static double GetDouble(PdfItem item, double defaultValue = 0)

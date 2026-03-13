@@ -43,8 +43,8 @@ namespace Caelum.Pages
 
         private TextBox _selectedTextBox;
         private Popup _textBoxPopup;
-        private ComboBox _fontSizeComboBox;
         private Border _colorIndicator;
+        private static readonly double[] TextFontSizeSteps = { 12d, 14d, 16d, 18d, 20d, 24d, 28d, 32d, 40d, 48d, 60d, 72d };
 
         private Popup _penPopup;
         private Popup _highlighterPopup;
@@ -1152,6 +1152,7 @@ namespace Caelum.Pages
         private async void PdfScrollViewer_ScrollChanged(object sender, ScrollChangedEventArgs e)
         {
             UpdatePageNumberIndicator();
+            UpdateSelectedTextBoxPopupVisibility(forceRefresh: e.VerticalChange != 0 || e.HorizontalChange != 0);
 
             _scrollReRenderCts?.Cancel();
             _scrollReRenderCts = new CancellationTokenSource();
@@ -1183,12 +1184,7 @@ namespace Caelum.Pages
                         await ReRenderPagesAsync(needsZoomRender, _lastRenderedDpiScale, token);
                 }
 
-                if (_textBoxPopup != null && _textBoxPopup.IsOpen)
-                {
-                    var offset = _textBoxPopup.HorizontalOffset;
-                    _textBoxPopup.HorizontalOffset = offset + 0.001;
-                    _textBoxPopup.HorizontalOffset = offset;
-                }
+                UpdateSelectedTextBoxPopupVisibility(forceRefresh: true);
             }
             catch (OperationCanceledException) { }
         }
@@ -2309,20 +2305,28 @@ namespace Caelum.Pages
 
         private void UpdatePageNumberIndicator()
         {
-            if (PageNumberText == null) return;
+            if (PageNumberLabel == null || PageCountText == null) return;
 
             if (_pageControls.Count == 0)
             {
-                PageNumberText.Text = "0 / 0";
+                PageNumberLabel.Text = "0";
+                PageCountText.Text = "/ 0";
                 return;
             }
 
+            int currentPageNumber = GetCurrentPageIndex() + 1;
+            PageNumberLabel.Text = currentPageNumber.ToString();
+            PageCountText.Text = $"/ {_pageControls.Count}";
+        }
+
+        private int GetCurrentPageIndex()
+        {
+            if (_pageControls.Count == 0)
+                return 0;
+
             double viewportHeight = PdfScrollViewer.ViewportHeight;
             if (viewportHeight <= 0)
-            {
-                PageNumberText.Text = $"1 / {_pageControls.Count}";
-                return;
-            }
+                return 0;
 
             double centerOffset = PdfScrollViewer.VerticalOffset + (viewportHeight / 2);
             int currentPageIndex = 0;
@@ -2331,13 +2335,12 @@ namespace Caelum.Pages
             {
                 double pageTop = GetScaledPageTop(i);
                 if (pageTop > centerOffset)
-                {
                     break;
-                }
+
                 currentPageIndex = i;
             }
 
-            PageNumberText.Text = $"{currentPageIndex + 1} / {_pageControls.Count}";
+            return currentPageIndex;
         }
 
         private async void Back_Click(object sender, RoutedEventArgs e)
@@ -2415,6 +2418,73 @@ namespace Caelum.Pages
             ZoomLabel.Visibility = Visibility.Visible;
         }
 
+        private void PageNumberLabel_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            if (_pageControls.Count == 0)
+                return;
+
+            PageNumberLabel.Visibility = Visibility.Collapsed;
+            PageNumberTextBox.Text = (GetCurrentPageIndex() + 1).ToString();
+            PageNumberTextBox.Visibility = Visibility.Visible;
+            PageNumberTextBox.Focus();
+            PageNumberTextBox.SelectAll();
+            e.Handled = true;
+        }
+
+        private void PageNumberTextBox_KeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.Key == Key.Enter)
+            {
+                ApplyPageJumpFromTextBox();
+                e.Handled = true;
+            }
+            else if (e.Key == Key.Escape)
+            {
+                HidePageNumberTextBox();
+                e.Handled = true;
+            }
+        }
+
+        private void PageNumberTextBox_LostFocus(object sender, RoutedEventArgs e)
+        {
+            ApplyPageJumpFromTextBox();
+        }
+
+        private void ApplyPageJumpFromTextBox()
+        {
+            if (_pageControls.Count == 0)
+            {
+                HidePageNumberTextBox();
+                return;
+            }
+
+            if (int.TryParse(PageNumberTextBox.Text.Trim(), out int requestedPage))
+            {
+                requestedPage = Math.Max(1, Math.Min(_pageControls.Count, requestedPage));
+                JumpToPage(requestedPage - 1);
+            }
+
+            HidePageNumberTextBox();
+        }
+
+        private void HidePageNumberTextBox()
+        {
+            PageNumberTextBox.Visibility = Visibility.Collapsed;
+            PageNumberLabel.Visibility = Visibility.Visible;
+        }
+
+        private void JumpToPage(int pageIndex)
+        {
+            if (pageIndex < 0 || pageIndex >= _pageControls.Count)
+                return;
+
+            double targetOffset = Math.Max(0, GetScaledPageTop(pageIndex) - 12);
+            PdfScrollViewer.ScrollToVerticalOffset(targetOffset);
+            _targetVerticalOffset = PdfScrollViewer.VerticalOffset;
+            UpdatePageNumberIndicator();
+            UpdateSelectedTextBoxPopupVisibility(forceRefresh: true);
+        }
+
         private void UpdateZoomLabel()
         {
             if (ZoomLabel != null)
@@ -2423,84 +2493,137 @@ namespace Caelum.Pages
 
         private void InitializeTextBoxPopup()
         {
-            _textBoxPopup = new Popup { Placement = PlacementMode.Bottom, StaysOpen = true, AllowsTransparency = true, VerticalOffset = 6 };
+            _textBoxPopup = new Popup { Placement = PlacementMode.Bottom, StaysOpen = true, AllowsTransparency = true, VerticalOffset = 10 };
 
-            var panel = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(6, 6, 6, 6) };
+            var panel = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(4) };
             var border = new Border
             {
-                Background = new SolidColorBrush(Color.FromArgb(245, 255, 255, 255)),
-                BorderBrush = new SolidColorBrush(Color.FromArgb(20, 0, 0, 0)),
+                Background = new SolidColorBrush(Color.FromArgb(250, 248, 250, 252)),
+                BorderBrush = new SolidColorBrush(Color.FromArgb(28, 15, 23, 42)),
                 BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(12),
+                CornerRadius = new CornerRadius(16),
                 Child = panel,
                 Effect = new System.Windows.Media.Effects.DropShadowEffect
                 {
-                    BlurRadius = 20,
-                    ShadowDepth = 4,
-                    Opacity = 0.14,
+                    BlurRadius = 24,
+                    ShadowDepth = 0,
+                    Opacity = 0.18,
                     Color = Colors.Black
                 }
             };
 
-            // Delete button - clean icon
             var deleteButton = new Button
             {
-                Width = 32, Height = 32,
+                Width = 28,
+                Height = 28,
                 Background = Brushes.Transparent,
                 BorderThickness = new Thickness(0),
                 Cursor = Cursors.Hand,
                 ToolTip = LocalizationService.Get("Editor.DeleteTooltip"),
-                Margin = new Thickness(2)
+                Margin = new Thickness(0)
             };
-            deleteButton.Template = CreateIconButtonTemplate("#FECACA", "#FCA5A5");
+            deleteButton.Template = CreateIconButtonTemplate("#FEE2E2", "#FECACA");
             deleteButton.Content = new TextBlock
             {
                 Text = "\uE74D",
                 FontFamily = new FontFamily("Segoe MDL2 Assets"),
-                FontSize = 14,
-                Foreground = new SolidColorBrush(Color.FromRgb(220, 38, 38)),
+                FontSize = 12,
+                Foreground = new SolidColorBrush(Color.FromRgb(185, 28, 28)),
                 HorizontalAlignment = HorizontalAlignment.Center,
                 VerticalAlignment = VerticalAlignment.Center
             };
             deleteButton.Click += (s, e) => DeleteSelectedTextBox();
 
-            // Separator
-            var sep1 = new Border { Width = 1, Background = new SolidColorBrush(Color.FromArgb(20, 0, 0, 0)), Margin = new Thickness(4, 6, 4, 6) };
-
-            _fontSizeComboBox = new ComboBox
+            var sep1 = new Border
             {
-                Width = 72, Margin = new Thickness(2),
-                Style = (Style)Application.Current.FindResource("ModernComboBox")
+                Width = 1,
+                Height = 18,
+                Background = new SolidColorBrush(Color.FromArgb(24, 15, 23, 42)),
+                Margin = new Thickness(6, 5, 6, 5),
+                VerticalAlignment = VerticalAlignment.Center
             };
-            foreach (var size in new[] { 12, 18, 24, 36, 48, 72 })
-            {
-                var item = new ComboBoxItem
-                {
-                    Content = size.ToString(),
-                    Style = (Style)Application.Current.FindResource("ModernComboBoxItem")
-                };
-                _fontSizeComboBox.Items.Add(item);
-            }
-            _fontSizeComboBox.SelectionChanged += FontSizeComboBox_SelectionChanged;
 
-            // Separator
-            var sep2 = new Border { Width = 1, Background = new SolidColorBrush(Color.FromArgb(20, 0, 0, 0)), Margin = new Thickness(4, 6, 4, 6) };
+            var decreaseFontButton = new Button
+            {
+                Width = 30,
+                Height = 28,
+                Margin = new Thickness(0),
+                Cursor = Cursors.Hand,
+                Background = Brushes.Transparent,
+                BorderThickness = new Thickness(0),
+                ToolTip = "Smaller text",
+                Content = CreateTextSizeButtonContent(increase: false)
+            };
+            decreaseFontButton.Template = CreateIconButtonTemplate("#E5E7EB", "#D1D5DB");
+            decreaseFontButton.Click += (s, e) => AdjustSelectedTextBoxFontSize(increase: false);
+
+            var increaseFontButton = new Button
+            {
+                Width = 30,
+                Height = 28,
+                Margin = new Thickness(0),
+                Cursor = Cursors.Hand,
+                Background = Brushes.Transparent,
+                BorderThickness = new Thickness(0),
+                ToolTip = "Bigger text",
+                Content = CreateTextSizeButtonContent(increase: true)
+            };
+            increaseFontButton.Template = CreateIconButtonTemplate("#E5E7EB", "#D1D5DB");
+            increaseFontButton.Click += (s, e) => AdjustSelectedTextBoxFontSize(increase: true);
+
+            var fontButtonGroup = new Border
+            {
+                Background = new SolidColorBrush(Color.FromArgb(24, 15, 23, 42)),
+                CornerRadius = new CornerRadius(10),
+                Padding = new Thickness(2, 0, 2, 0),
+                Child = new StackPanel
+                {
+                    Orientation = Orientation.Horizontal,
+                    Children =
+                    {
+                        decreaseFontButton,
+                        new Border
+                        {
+                            Width = 1,
+                            Height = 16,
+                            Margin = new Thickness(1, 0, 1, 0),
+                            VerticalAlignment = VerticalAlignment.Center,
+                            Background = new SolidColorBrush(Color.FromArgb(30, 15, 23, 42))
+                        },
+                        increaseFontButton
+                    }
+                }
+            };
+
+            var sep2 = new Border
+            {
+                Width = 1,
+                Height = 18,
+                Background = new SolidColorBrush(Color.FromArgb(24, 15, 23, 42)),
+                Margin = new Thickness(6, 5, 6, 5),
+                VerticalAlignment = VerticalAlignment.Center
+            };
 
             _colorIndicator = new Border
             {
-                Width = 22, Height = 22,
-                CornerRadius = new CornerRadius(11),
+                Width = 14,
+                Height = 14,
+                CornerRadius = new CornerRadius(7),
                 Background = new SolidColorBrush(_textColor),
-                BorderBrush = new SolidColorBrush(Color.FromArgb(30, 0, 0, 0)),
-                BorderThickness = new Thickness(1.5)
+                BorderBrush = new SolidColorBrush(Color.FromArgb(36, 15, 23, 42)),
+                BorderThickness = new Thickness(1)
             };
             var colorButton = new Button
             {
-                Content = _colorIndicator, Width = 34, Height = 32,
-                Cursor = Cursors.Hand, Background = Brushes.Transparent,
-                BorderThickness = new Thickness(0), Margin = new Thickness(2)
+                Content = _colorIndicator,
+                Width = 28,
+                Height = 28,
+                Cursor = Cursors.Hand,
+                Background = Brushes.Transparent,
+                BorderThickness = new Thickness(0),
+                Margin = new Thickness(0)
             };
-            colorButton.Template = CreateIconButtonTemplate("#E8E8E8", "#DCDCDC");
+            colorButton.Template = CreateIconButtonTemplate("#E0E7FF", "#DBEAFE");
             var colorPopup = new Popup { Placement = PlacementMode.Bottom, StaysOpen = false, AllowsTransparency = true };
             
             int cols = 12;
@@ -2578,12 +2701,12 @@ namespace Caelum.Pages
 
             colorPopup.Child = new Border
             {
-                Background = new SolidColorBrush(Color.FromArgb(245, 255, 255, 255)),
-                BorderBrush = new SolidColorBrush(Color.FromArgb(20, 0, 0, 0)),
+                Background = new SolidColorBrush(Color.FromArgb(250, 248, 250, 252)),
+                BorderBrush = new SolidColorBrush(Color.FromArgb(28, 15, 23, 42)),
                 BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(12),
+                CornerRadius = new CornerRadius(16),
                 Child = new StackPanel { Margin = new Thickness(16), Children = { paletteGrid } },
-                Effect = new System.Windows.Media.Effects.DropShadowEffect { BlurRadius = 20, ShadowDepth = 4, Opacity = 0.14, Color = Colors.Black }
+                Effect = new System.Windows.Media.Effects.DropShadowEffect { BlurRadius = 24, ShadowDepth = 0, Opacity = 0.18, Color = Colors.Black }
             };
             colorButton.Click += (s, e) =>
             {
@@ -2593,7 +2716,7 @@ namespace Caelum.Pages
 
             panel.Children.Add(deleteButton);
             panel.Children.Add(sep1);
-            panel.Children.Add(_fontSizeComboBox);
+            panel.Children.Add(fontButtonGroup);
             panel.Children.Add(sep2);
             panel.Children.Add(colorButton);
 
@@ -2604,18 +2727,6 @@ namespace Caelum.Pages
         // - Clicking on canvas background
         // - Switching tools
         // - Clicking outside in PageControl_BackgroundPointerPressed
-
-        private void FontSizeComboBox_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
-        {
-            if (_selectedTextBox == null || _fontSizeComboBox.SelectedItem == null) return;
-            var content = _fontSizeComboBox.SelectedItem is ComboBoxItem cbi ? cbi.Content?.ToString() : _fontSizeComboBox.SelectedItem.ToString();
-            if (double.TryParse(content, out var size))
-            {
-                _selectedTextBox.FontSize = size;
-                _currentFontSize = size;
-                MarkDirty();
-            }
-        }
 
         private void DeleteSelectedTextBox()
         {
@@ -2635,14 +2746,19 @@ namespace Caelum.Pages
             }
         }
 
-        private void SelectTextBox(TextBox textBox)
+        private void SelectTextBox(TextBox textBox, bool focusTextBox = true, bool refreshPopupPlacement = false)
         {
+            if (textBox == null)
+                return;
+
             // Auto-switch to Text tool when clicking on an existing textbox,
             // regardless of the currently active tool.
             if (_currentTool != ToolType.Text)
                 ActivateTool(ToolType.Text);
 
-            if (_selectedTextBox != null && _selectedTextBox != textBox)
+            bool selectionChanged = !ReferenceEquals(_selectedTextBox, textBox);
+
+            if (_selectedTextBox != null && selectionChanged)
             {
                 ApplyTextBoxChrome(_selectedTextBox, isSelected: false);
                 _selectedTextBox.IsReadOnly = true;
@@ -2652,13 +2768,10 @@ namespace Caelum.Pages
             textBox.IsReadOnly = false;
             ApplyTextBoxChrome(textBox, isSelected: true);
             SyncPopupToSelectedTextBox();
+            ShowTextBoxPopupFor(textBox.Parent as UIElement ?? textBox, refreshPopupPlacement || selectionChanged);
 
-            // Close then reopen so WPF repositions the popup to the new target.
-            // Simply changing PlacementTarget while the popup is open doesn't move it.
-            _textBoxPopup.IsOpen = false;
-            _textBoxPopup.PlacementTarget = textBox.Parent as UIElement ?? textBox;
-            _textBoxPopup.IsOpen = true;
-            textBox.Focus();
+            if (focusTextBox && !textBox.IsKeyboardFocusWithin)
+                textBox.Focus();
         }
 
 
@@ -2702,23 +2815,150 @@ namespace Caelum.Pages
         {
             if (_selectedTextBox == null) return;
 
-            var size = _selectedTextBox.FontSize;
-            var sizes = new[] { 12d, 18d, 24d, 36d, 48d, 72d };
-            var nearest = sizes.OrderBy(s => Math.Abs(s - size)).First();
-
-            for (int i = 0; i < _fontSizeComboBox.Items.Count; i++)
-            {
-                var item = _fontSizeComboBox.Items[i];
-                var content = item is ComboBoxItem cbi ? cbi.Content?.ToString() : item.ToString();
-                if (content == nearest.ToString())
-                {
-                    _fontSizeComboBox.SelectedIndex = i;
-                    break;
-                }
-            }
-
+            _currentFontSize = _selectedTextBox.FontSize;
             var current = (_selectedTextBox.Foreground as SolidColorBrush)?.Color ?? Colors.Black;
             _colorIndicator.Background = new SolidColorBrush(current);
+        }
+
+        private void AdjustSelectedTextBoxFontSize(bool increase)
+        {
+            if (_selectedTextBox == null)
+                return;
+
+            double currentSize = _selectedTextBox.FontSize;
+            double nextSize = GetSteppedFontSize(currentSize, increase);
+            if (Math.Abs(nextSize - currentSize) < 0.01)
+                return;
+
+            _selectedTextBox.FontSize = nextSize;
+            _currentFontSize = nextSize;
+            MarkDirty();
+            RefreshPopupPlacement(_textBoxPopup);
+            _selectedTextBox.Focus();
+        }
+
+        private static double GetSteppedFontSize(double currentSize, bool increase)
+        {
+            if (TextFontSizeSteps.Length == 0)
+                return currentSize;
+
+            if (increase)
+            {
+                foreach (double size in TextFontSizeSteps)
+                {
+                    if (size > currentSize + 0.1)
+                        return size;
+                }
+
+                return TextFontSizeSteps[^1];
+            }
+
+            for (int i = TextFontSizeSteps.Length - 1; i >= 0; i--)
+            {
+                if (TextFontSizeSteps[i] < currentSize - 0.1)
+                    return TextFontSizeSteps[i];
+            }
+
+            return TextFontSizeSteps[0];
+        }
+
+        private static UIElement CreateTextSizeButtonContent(bool increase)
+        {
+            return new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+                Children =
+                {
+                    new TextBlock
+                    {
+                        Text = "A",
+                        FontSize = increase ? 15 : 13,
+                        FontWeight = FontWeights.SemiBold,
+                        Foreground = new SolidColorBrush(Color.FromRgb(31, 41, 55)),
+                        VerticalAlignment = VerticalAlignment.Center
+                    },
+                    new TextBlock
+                    {
+                        Text = increase ? "^" : "v",
+                        FontSize = 8,
+                        Margin = new Thickness(1, 0, 0, 0),
+                        Foreground = new SolidColorBrush(Color.FromRgb(75, 85, 99)),
+                        VerticalAlignment = increase ? VerticalAlignment.Top : VerticalAlignment.Bottom
+                    }
+                }
+            };
+        }
+
+        private void UpdateSelectedTextBoxPopupVisibility(bool forceRefresh)
+        {
+            if (_selectedTextBox == null || _textBoxPopup == null)
+                return;
+
+            var placementTarget = _selectedTextBox.Parent as UIElement ?? _selectedTextBox;
+            if (!IsElementVisibleInPdfViewport(placementTarget))
+            {
+                _textBoxPopup.IsOpen = false;
+                return;
+            }
+
+            ShowTextBoxPopupFor(placementTarget, forceRefresh);
+        }
+
+        private bool IsElementVisibleInPdfViewport(UIElement element)
+        {
+            if (element == null || PdfScrollViewer == null || !element.IsVisible)
+                return false;
+
+            double viewportWidth = PdfScrollViewer.ViewportWidth > 0 ? PdfScrollViewer.ViewportWidth : PdfScrollViewer.ActualWidth;
+            double viewportHeight = PdfScrollViewer.ViewportHeight > 0 ? PdfScrollViewer.ViewportHeight : PdfScrollViewer.ActualHeight;
+            if (viewportWidth <= 0 || viewportHeight <= 0 || element.RenderSize.Width <= 0 || element.RenderSize.Height <= 0)
+                return false;
+
+            try
+            {
+                var bounds = element.TransformToAncestor(PdfScrollViewer)
+                    .TransformBounds(new Rect(new Point(0, 0), element.RenderSize));
+                var viewportBounds = new Rect(0, 0, viewportWidth, viewportHeight);
+                return bounds.IntersectsWith(viewportBounds);
+            }
+            catch (InvalidOperationException)
+            {
+                return false;
+            }
+        }
+
+        private void ShowTextBoxPopupFor(UIElement placementTarget, bool forceRefresh)
+        {
+            if (_textBoxPopup == null || placementTarget == null)
+                return;
+
+            bool targetChanged = !ReferenceEquals(_textBoxPopup.PlacementTarget, placementTarget);
+            _textBoxPopup.PlacementTarget = placementTarget;
+
+            if (!_textBoxPopup.IsOpen)
+            {
+                _textBoxPopup.IsOpen = true;
+                return;
+            }
+
+            if (forceRefresh || targetChanged)
+                RefreshPopupPlacement(_textBoxPopup);
+        }
+
+        private static void RefreshPopupPlacement(Popup popup)
+        {
+            if (popup == null || !popup.IsOpen)
+                return;
+
+            double horizontalOffset = popup.HorizontalOffset;
+            double verticalOffset = popup.VerticalOffset;
+
+            popup.HorizontalOffset = horizontalOffset + 0.001;
+            popup.VerticalOffset = verticalOffset + 0.001;
+            popup.HorizontalOffset = horizontalOffset;
+            popup.VerticalOffset = verticalOffset;
         }
 
         private void PageControl_TextOverlayPointerPressed(object sender, MouseButtonEventArgs e)
@@ -2777,10 +3017,22 @@ namespace Caelum.Pages
 
             var dragHandle = new Border
             {
-                Height = 16,
+                Width = 44,
+                Height = 22,
+                Margin = new Thickness(0, 4, 0, 4),
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+                CornerRadius = new CornerRadius(8),
                 Visibility = select ? Visibility.Visible : Visibility.Collapsed,
                 Cursor = Cursors.SizeAll,
-                Background = Brushes.Transparent
+                Background = new SolidColorBrush(Color.FromRgb(37, 99, 235)),
+                Effect = new System.Windows.Media.Effects.DropShadowEffect
+                {
+                    BlurRadius = 10,
+                    ShadowDepth = 0,
+                    Opacity = 0.16,
+                    Color = Colors.Black
+                }
             };
 
             var dragIcon = new StackPanel
@@ -2789,12 +3041,13 @@ namespace Caelum.Pages
                 HorizontalAlignment = HorizontalAlignment.Center,
                 VerticalAlignment = VerticalAlignment.Center
             };
-            for (int i = 0; i < 3; i++)
+            for (int i = 0; i < 4; i++)
             {
                 dragIcon.Children.Add(new Ellipse
                 {
-                    Width = 3, Height = 3,
-                    Fill = new SolidColorBrush(Color.FromRgb(180, 180, 180)),
+                    Width = 4,
+                    Height = 4,
+                    Fill = Brushes.White,
                     Margin = new Thickness(1.5, 0, 1.5, 0)
                 });
             }
@@ -2859,7 +3112,8 @@ namespace Caelum.Pages
             if (handle?.Parent is Grid container)
             {
                 var tb = container.Children.OfType<TextBox>().FirstOrDefault();
-                if (tb != null) SelectTextBox(tb);
+                if (tb != null)
+                    SelectTextBox(tb, focusTextBox: false);
             }
 
             _dragArmed = true;
@@ -2930,8 +3184,7 @@ namespace Caelum.Pages
                     var tb = _draggedContainer.Children.OfType<TextBox>().FirstOrDefault();
                     if (tb != null)
                     {
-                        _textBoxPopup.PlacementTarget = _draggedContainer;
-                        _textBoxPopup.IsOpen = true;
+                        ShowTextBoxPopupFor(_draggedContainer, forceRefresh: true);
                         tb.Focus();
                     }
                 }
