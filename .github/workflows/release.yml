@@ -2,6 +2,8 @@ name: Build & Release
 
 on:
   push:
+    branches:
+      - main
     tags:
       - 'v*'          # Push a tag like v1.0.0 to trigger a release
   workflow_dispatch:    # Also allow manual trigger from GitHub Actions tab
