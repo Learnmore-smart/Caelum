@@ -7,6 +7,8 @@ namespace Caelum.Pages
     {
         public DataTemplate AddTileTemplate { get; set; }
 
+        public DataTemplate FolderTileTemplate { get; set; }
+
         public DataTemplate FileTileTemplate { get; set; }
 
         public override DataTemplate SelectTemplate(object item, DependencyObject container)
@@ -14,6 +16,11 @@ namespace Caelum.Pages
             if (item is HomeTile tile && tile.IsAddTile && AddTileTemplate != null)
             {
                 return AddTileTemplate;
+            }
+
+            if (item is HomeTile folderTile && folderTile.IsFolder && FolderTileTemplate != null)
+            {
+                return FolderTileTemplate;
             }
 
             if (FileTileTemplate != null)

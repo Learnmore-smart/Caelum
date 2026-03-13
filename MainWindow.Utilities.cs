@@ -29,6 +29,19 @@ namespace Caelum
             NewTabButton.ToolTip = LocalizationService.Get("Main.NewTabTooltip");
             RefreshOpenContentLocalization();
             RebuildTabBar();
+            RefreshSelectButtonVisualState();
+        }
+
+        public void RefreshSelectButtonVisualState()
+        {
+            if (SelectButton == null)
+                return;
+
+            var isActive =
+                (ActiveFrame?.Content is HomePage home && home.IsSelectionMode) ||
+                (ActiveFrame?.Content is EditorPage editor && editor.IsSelectionMode);
+
+            SelectButton.Tag = isActive;
         }
 
         private void ApplySettings(AppSettings settings)

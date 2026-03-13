@@ -103,6 +103,58 @@
                 </Setter.Value>
             </Setter>
         </Style>
+
+        <Style x:Key="SelectToolbarButtonStyle" TargetType="Button">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="#555555"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Height" Value="28"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Padding" Value="10,4"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Root" Background="{TemplateBinding Background}" CornerRadius="6" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <MultiTrigger>
+                                <MultiTrigger.Conditions>
+                                    <Condition Property="Tag" Value="False"/>
+                                    <Condition Property="IsMouseOver" Value="True"/>
+                                </MultiTrigger.Conditions>
+                                <Setter TargetName="Root" Property="Background" Value="#12000000"/>
+                            </MultiTrigger>
+                            <MultiTrigger>
+                                <MultiTrigger.Conditions>
+                                    <Condition Property="Tag" Value="True"/>
+                                    <Condition Property="IsMouseOver" Value="True"/>
+                                </MultiTrigger.Conditions>
+                                <Setter TargetName="Root" Property="Background" Value="#BFDBFE"/>
+                            </MultiTrigger>
+                            <MultiTrigger>
+                                <MultiTrigger.Conditions>
+                                    <Condition Property="Tag" Value="False"/>
+                                    <Condition Property="IsPressed" Value="True"/>
+                                </MultiTrigger.Conditions>
+                                <Setter TargetName="Root" Property="Background" Value="#1A000000"/>
+                            </MultiTrigger>
+                            <MultiTrigger>
+                                <MultiTrigger.Conditions>
+                                    <Condition Property="Tag" Value="True"/>
+                                    <Condition Property="IsPressed" Value="True"/>
+                                </MultiTrigger.Conditions>
+                                <Setter TargetName="Root" Property="Background" Value="#93C5FD"/>
+                            </MultiTrigger>
+                            <Trigger Property="Tag" Value="True">
+                                <Setter TargetName="Root" Property="Background" Value="#DBEAFE"/>
+                                <Setter Property="Foreground" Value="#1D4ED8"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
     </Window.Resources>
 
     <Grid Background="White" AllowDrop="True">
@@ -152,10 +204,10 @@
                                 </TextBlock>
                             </Grid>
                         </Border>
-                        <Button x:Name="SelectButton" Click="SelectButton_Click" Style="{StaticResource ToolbarTextButtonStyle}" Margin="0,0,2,0" WindowChrome.IsHitTestVisibleInChrome="True">
+                        <Button x:Name="SelectButton" Click="SelectButton_Click" Style="{StaticResource SelectToolbarButtonStyle}" Margin="0,0,2,0" Tag="False" WindowChrome.IsHitTestVisibleInChrome="True">
                             <StackPanel Orientation="Horizontal">
-                                <TextBlock Text="&#xE762;" FontFamily="Segoe MDL2 Assets" FontSize="13" Foreground="#555555" VerticalAlignment="Center"/>
-                                <TextBlock x:Name="SelectButtonLabel" Text="Select" FontSize="12" Foreground="#555555" Margin="5,0,0,0" VerticalAlignment="Center"/>
+                                <TextBlock x:Name="SelectButtonIcon" Text="&#xE762;" FontFamily="Segoe MDL2 Assets" FontSize="13" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" VerticalAlignment="Center"/>
+                                <TextBlock x:Name="SelectButtonLabel" Text="Select" FontSize="12" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" Margin="5,0,0,0" VerticalAlignment="Center"/>
                             </StackPanel>
                         </Button>
                         <Button x:Name="SortButton" Click="SortButton_Click" Style="{StaticResource NavButtonStyle}" Margin="0,0,2,0" WindowChrome.IsHitTestVisibleInChrome="True">

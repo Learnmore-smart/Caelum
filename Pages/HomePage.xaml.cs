@@ -2,10 +2,12 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
-using System.Diagnostics;
+using System.IO;
+using System.Linq;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Data;
 using System.Windows.Input;
 using Microsoft.Win32;
 using Caelum.Services;
@@ -14,185 +16,372 @@ namespace Caelum.Pages
 {
     public sealed partial class HomePage : Page
     {
+        private const string LibraryTilePathDataFormat = "Caelum.LibraryTilePath";
+
+        private enum HomeSortMode
+        {
+            Date,
+            Name
+        }
+
         public ObservableCollection<HomeTile> HomeTiles { get; } = new ObservableCollection<HomeTile>();
-        private bool _recentFilesLoaded;
+
+        private bool _libraryLoaded;
+        private string _currentFolderId = string.Empty;
+        private string _currentFolderName = string.Empty;
+        private string _searchQuery = string.Empty;
+        private HomeSortMode _currentSortMode = HomeSortMode.Date;
+        private Point _dragStartPoint;
+        private HomeTile _dragCandidateTile;
+
+        public bool IsSelectionMode { get; private set; }
 
         public HomePage()
         {
-            this.InitializeComponent();
-            this.DataContext = this;
-            HomeTiles.Add(HomeTile.CreateAddTile());
+            InitializeComponent();
+            DataContext = this;
             ApplyLocalization();
             Loaded += HomePage_Loaded;
         }
 
-        private async void HomePage_Loaded(object sender, RoutedEventArgs e)
+        public bool IsInsideFolder => !string.IsNullOrWhiteSpace(_currentFolderId);
+
+        public string NavigateUpText => LocalizationService.Get("Home.NavigateUp");
+
+        public string FolderBreadcrumb
         {
-            await EnsureRecentFilesLoadedAsync();
+            get
+            {
+                if (!IsInsideFolder)
+                    return string.Empty;
+
+                var names = new List<string>();
+                var cursor = RecentFilesService.GetFolder(_currentFolderId);
+                while (cursor != null)
+                {
+                    names.Add(cursor.DisplayName);
+                    cursor = string.IsNullOrWhiteSpace(cursor.ParentFolderId)
+                        ? null
+                        : RecentFilesService.GetFolder(cursor.ParentFolderId);
+                }
+
+                names.Reverse();
+                names.Insert(0, LocalizationService.Get("Home.LibraryRoot"));
+                return string.Join(" / ", names);
+            }
         }
 
-        private async Task EnsureRecentFilesLoadedAsync()
+        private async void HomePage_Loaded(object sender, RoutedEventArgs e)
         {
-            if (_recentFilesLoaded)
+            await EnsureLibraryLoadedAsync();
+        }
+
+        private async Task EnsureLibraryLoadedAsync()
+        {
+            if (_libraryLoaded)
             {
+                await RefreshCurrentFolderAsync();
                 return;
             }
 
-            await LoadRecentFilesAsync();
-            _recentFilesLoaded = true;
-        }
-
-        private Task LoadRecentFilesAsync()
-        {
-            try
-            {
-                foreach (var entry in RecentFilesService.GetRecentEntries())
-                {
-                    if (!string.Equals(System.IO.Path.GetExtension(entry.Path), ".pdf", StringComparison.OrdinalIgnoreCase))
-                        continue;
-
-                    HomeTiles.Add(HomeTile.CreateFileTile(entry));
-                }
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"Error loading recent files: {ex.Message}");
-            }
-
-            RefreshSelectionState();
-            return Task.CompletedTask;
-        }
-
-        public bool IsSelectionMode { get; private set; }
-
-        public void ToggleSelectionMode()
-        {
-            SetSelectionMode(!IsSelectionMode);
+            await RefreshCurrentFolderAsync();
+            _libraryLoaded = true;
         }
 
         public void Filter(string query)
         {
-            var view = System.Windows.Data.CollectionViewSource.GetDefaultView(HomeTiles);
-            if (string.IsNullOrWhiteSpace(query))
-            {
-                view.Filter = null;
-            }
-            else
-            {
-                view.Filter = item =>
-                {
-                    if (item is HomeTile tile)
-                    {
-                        if (tile.IsAddTile) return true;
-                        return tile.FileName?.Contains(query, StringComparison.OrdinalIgnoreCase) == true;
-                    }
-                    return false;
-                };
-            }
-            view.Refresh();
+            _searchQuery = query?.Trim() ?? string.Empty;
+            ApplyCollectionView();
             RefreshSelectionState();
         }
+
         public void SortByName()
         {
-            var view = (System.Windows.Data.CollectionView)System.Windows.Data.CollectionViewSource.GetDefaultView(HomeTiles);
-            view.SortDescriptions.Clear();
-            view.SortDescriptions.Add(new SortDescription("IsAddTile", ListSortDirection.Descending)); // Add tile always first
-            view.SortDescriptions.Add(new SortDescription("FileName", ListSortDirection.Ascending));
+            _currentSortMode = HomeSortMode.Name;
+            ApplyCollectionView();
         }
 
         public void SortByDate()
         {
-            var view = (System.Windows.Data.CollectionView)System.Windows.Data.CollectionViewSource.GetDefaultView(HomeTiles);
-            view.SortDescriptions.Clear();
-            view.SortDescriptions.Add(new SortDescription("IsAddTile", ListSortDirection.Descending)); // Add tile always first
-            view.SortDescriptions.Add(new SortDescription("LastModified", ListSortDirection.Descending));
+            _currentSortMode = HomeSortMode.Date;
+            ApplyCollectionView();
         }
 
-        private void TilesGrid_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+        private async Task RefreshCurrentFolderAsync()
         {
+            var selectionState = HomeTiles
+                .Where(tile => tile.IsFile && tile.IsSelected)
+                .ToDictionary(tile => tile.Path, tile => tile.IsSelected, StringComparer.OrdinalIgnoreCase);
+
+            var activeFolder = string.IsNullOrWhiteSpace(_currentFolderId) ? null : RecentFilesService.GetFolder(_currentFolderId);
+            if (!string.IsNullOrWhiteSpace(_currentFolderId) && activeFolder == null)
+            {
+                _currentFolderId = string.Empty;
+                _currentFolderName = string.Empty;
+            }
+            else
+            {
+                _currentFolderName = activeFolder?.DisplayName ?? string.Empty;
+            }
+
+            HomeTiles.Clear();
+            HomeTiles.Add(HomeTile.CreateAddTile());
+
+            foreach (var entry in RecentFilesService.GetLibraryEntries(_currentFolderId))
+            {
+                if (entry.IsFolder)
+                {
+                    HomeTiles.Add(HomeTile.CreateFolderTile(entry, RecentFilesService.GetDirectChildCount(entry.Id)));
+                    continue;
+                }
+
+                if (!string.Equals(Path.GetExtension(entry.Path), ".pdf", StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                var tile = HomeTile.CreateFileTile(entry);
+                if (selectionState.TryGetValue(tile.Path, out var isSelected))
+                    tile.IsSelected = isSelected;
+
+                HomeTiles.Add(tile);
+            }
+
+            UpdateHeaderText();
+            ApplyCollectionView();
+            RefreshSelectionState();
+            await Task.CompletedTask;
+        }
+
+        private void UpdateHeaderText()
+        {
+            HomeTitleTextBlock.Text = IsInsideFolder
+                ? _currentFolderName
+                : LocalizationService.Get("Home.Title");
+            HomeSubtitleTextBlock.Text = IsInsideFolder
+                ? LocalizationService.Format("Home.FolderSubtitle", _currentFolderName)
+                : LocalizationService.Get("Home.Subtitle");
+
+            OnPropertyChanged(nameof(IsInsideFolder));
+            OnPropertyChanged(nameof(NavigateUpText));
+            OnPropertyChanged(nameof(FolderBreadcrumb));
+        }
+
+        private void ApplyCollectionView()
+        {
+            var view = (CollectionView)CollectionViewSource.GetDefaultView(HomeTiles);
+            view.Filter = item =>
+            {
+                if (item is not HomeTile tile)
+                    return false;
+
+                if (tile.IsAddTile)
+                    return true;
+
+                if (string.IsNullOrWhiteSpace(_searchQuery))
+                    return true;
+
+                return tile.FileName?.Contains(_searchQuery, StringComparison.OrdinalIgnoreCase) == true;
+            };
+
+            view.SortDescriptions.Clear();
+            view.SortDescriptions.Add(new SortDescription(nameof(HomeTile.SortPriority), ListSortDirection.Ascending));
+
+            if (_currentSortMode == HomeSortMode.Name)
+            {
+                view.SortDescriptions.Add(new SortDescription(nameof(HomeTile.FileName), ListSortDirection.Ascending));
+            }
+            else
+            {
+                view.SortDescriptions.Add(new SortDescription(nameof(HomeTile.LastModified), ListSortDirection.Descending));
+                view.SortDescriptions.Add(new SortDescription(nameof(HomeTile.FileName), ListSortDirection.Ascending));
+            }
+
+            view.Refresh();
         }
 
         private void AddTile_Click(object sender, RoutedEventArgs e)
         {
-            _ = PickAndOpenPdfAsync();
+            if (sender is FrameworkElement placementTarget)
+                ShowAddTileMenu(placementTarget);
+        }
+
+        private void ShowAddTileMenu(FrameworkElement placementTarget)
+        {
+            var menu = new ContextMenu
+            {
+                Style = BuildContextMenuStyle(),
+                PlacementTarget = placementTarget
+            };
+
+            var openItem = CreateMenuItem(LocalizationService.Get("Home.Menu.OpenFile"), "\uE8E5");
+            openItem.Click += async (_, _) => await PickAndOpenPdfAsync();
+            menu.Items.Add(openItem);
+
+            var createFolderItem = CreateMenuItem(LocalizationService.Get("Home.Menu.CreateFolder"), "\uE8B7");
+            createFolderItem.Click += async (_, _) => await CreateFolderAsync();
+            menu.Items.Add(createFolderItem);
+
+            var createNotebookItem = CreateMenuItem(LocalizationService.Get("Home.Menu.CreateNotebook"), "\uE70B");
+            createNotebookItem.Click += async (_, _) => await CreateEmptyNotebookAsync();
+            menu.Items.Add(createNotebookItem);
+
+            menu.IsOpen = true;
         }
 
         private void FileTile_Click(object sender, RoutedEventArgs e)
         {
-            if (sender is Button button && button.Tag is HomeTile tile)
-            {
-                if (IsSelectionMode)
-                {
-                    ToggleTileSelection(tile);
-                    return;
-                }
+            if (sender is not Button button || button.Tag is not HomeTile tile || !tile.IsFile)
+                return;
 
-                _ = OpenRecentTileAsync(tile);
+            if (IsSelectionMode)
+            {
+                ToggleTileSelection(tile);
+                return;
             }
+
+            _ = OpenFileTileAsync(tile);
         }
 
-        private void TileMenu_Click(object sender, RoutedEventArgs e)
+        private void FolderTile_Click(object sender, RoutedEventArgs e)
         {
-            // Legacy - no longer used (caret removed)
+            if (sender is not Button button || button.Tag is not HomeTile tile || !tile.IsFolder)
+                return;
+
+            _currentFolderId = tile.Id;
+            _currentFolderName = tile.FileName;
+            _ = RefreshCurrentFolderAsync();
         }
 
         private void FileTile_RightClick(object sender, MouseButtonEventArgs e)
         {
-            if (sender is Grid grid && grid.Tag is HomeTile tile && !tile.IsAddTile)
+            if (sender is not FrameworkElement element || element.Tag is not HomeTile tile || !tile.IsFile)
+                return;
+
+            ShowFileContextMenu(tile, element);
+            e.Handled = true;
+        }
+
+        private void FolderTile_RightClick(object sender, MouseButtonEventArgs e)
+        {
+            if (sender is not FrameworkElement element || element.Tag is not HomeTile tile || !tile.IsFolder)
+                return;
+
+            ShowFolderContextMenu(tile, element);
+            e.Handled = true;
+        }
+
+        private void ShowFileContextMenu(HomeTile tile, FrameworkElement placementTarget)
+        {
+            var menu = new ContextMenu
             {
-                var menu = new ContextMenu();
-                menu.Style = BuildContextMenuStyle();
+                Style = BuildContextMenuStyle(),
+                PlacementTarget = placementTarget
+            };
 
-                var viewItem = CreateMenuItem(LocalizationService.Get("Home.Context.Open"), "\uE7C3");
-                viewItem.Click += (s, ev) => _ = OpenRecentTileAsync(tile);
-                menu.Items.Add(viewItem);
+            var openItem = CreateMenuItem(LocalizationService.Get("Home.Context.Open"), "\uE7C3");
+            openItem.Click += async (_, _) => await OpenFileTileAsync(tile);
+            menu.Items.Add(openItem);
 
-                var editItem = CreateMenuItem(LocalizationService.Get("Home.Context.Rename"), "\uE70F");
-                editItem.Click += async (s, ev) => await RenameTileAsync(tile);
-                menu.Items.Add(editItem);
+            var renameItem = CreateMenuItem(LocalizationService.Get("Home.Context.Rename"), "\uE70F");
+            renameItem.Click += async (_, _) => await RenameTileAsync(tile);
+            menu.Items.Add(renameItem);
 
-                var selectItem = CreateMenuItem(LocalizationService.Get("Home.Context.Select"), "\uE762");
-                selectItem.Click += (s, ev) =>
+            var selectItem = CreateMenuItem(LocalizationService.Get("Home.Context.Select"), "\uE762");
+            selectItem.Click += (_, _) =>
+            {
+                if (!IsSelectionMode)
+                    ToggleSelectionMode();
+                ToggleTileSelection(tile);
+            };
+            menu.Items.Add(selectItem);
+
+            if (IsInsideFolder)
+            {
+                var moveToRootItem = CreateMenuItem(LocalizationService.Get("Home.Context.MoveToLibrary"), "\uE8DE");
+                moveToRootItem.Click += async (_, _) =>
                 {
-                    if (!IsSelectionMode)
-                        ToggleSelectionMode();
-                    ToggleTileSelection(tile);
+                    RecentFilesService.MoveToLibraryRoot(tile.Path);
+                    await RefreshCurrentFolderAsync();
                 };
-                menu.Items.Add(selectItem);
-
-                var copyItem = CreateMenuItem(LocalizationService.Get("Home.Context.CopyPath"), "\uE8C8");
-                copyItem.Click += (s, ev) =>
-                {
-                    try { Clipboard.SetText(tile.Path); } catch { }
-                };
-                menu.Items.Add(copyItem);
-
-                var openFolderItem = CreateMenuItem(LocalizationService.Get("Home.Context.OpenFolder"), "\uE838");
-                openFolderItem.Click += (s, ev) => OpenContainingFolder(tile);
-                menu.Items.Add(openFolderItem);
-
-                var exportItem = CreateMenuItem(LocalizationService.Get("Home.Context.Export"), "\uEDE1");
-                exportItem.Click += async (s, ev) => await ExportTileAsync(tile);
-                menu.Items.Add(exportItem);
-
-                menu.Items.Add(new Separator { Margin = new Thickness(0, 4, 0, 4) });
-
-                var deleteItem = CreateMenuItem(LocalizationService.Get("Home.Context.Remove"), "\uE74D", new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(211, 47, 47)));
-                deleteItem.Click += async (s, ev) => await RemoveMissingRecentTileAsync(tile);
-                menu.Items.Add(deleteItem);
-
-                menu.PlacementTarget = grid;
-                menu.IsOpen = true;
-                e.Handled = true;
+                menu.Items.Add(moveToRootItem);
             }
+
+            var copyItem = CreateMenuItem(LocalizationService.Get("Home.Context.CopyPath"), "\uE8C8");
+            copyItem.Click += (_, _) =>
+            {
+                try { Clipboard.SetText(tile.Path); } catch { }
+            };
+            menu.Items.Add(copyItem);
+
+            var openFolderItem = CreateMenuItem(LocalizationService.Get("Home.Context.OpenFolder"), "\uE838");
+            openFolderItem.Click += (_, _) => OpenContainingFolder(tile);
+            menu.Items.Add(openFolderItem);
+
+            var exportItem = CreateMenuItem(LocalizationService.Get("Home.Context.Export"), "\uEDE1");
+            exportItem.Click += async (_, _) => await ExportTileAsync(tile);
+            menu.Items.Add(exportItem);
+
+            menu.Items.Add(new Separator { Margin = new Thickness(0, 4, 0, 4) });
+
+            var removeItem = CreateMenuItem(LocalizationService.Get("Home.Context.Remove"), "\uE74D", new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(211, 47, 47)));
+            removeItem.Click += async (_, _) => await RemoveFileTileAsync(tile);
+            menu.Items.Add(removeItem);
+
+            menu.IsOpen = true;
+        }
+
+        private void ShowFolderContextMenu(HomeTile tile, FrameworkElement placementTarget)
+        {
+            var menu = new ContextMenu
+            {
+                Style = BuildContextMenuStyle(),
+                PlacementTarget = placementTarget
+            };
+
+            var openItem = CreateMenuItem(LocalizationService.Get("Home.Context.Open"), "\uE8B7");
+            openItem.Click += (_, _) =>
+            {
+                _currentFolderId = tile.Id;
+                _currentFolderName = tile.FileName;
+                _ = RefreshCurrentFolderAsync();
+            };
+            menu.Items.Add(openItem);
+
+            var renameItem = CreateMenuItem(LocalizationService.Get("Home.Context.Rename"), "\uE70F");
+            renameItem.Click += async (_, _) => await RenameTileAsync(tile);
+            menu.Items.Add(renameItem);
+
+            menu.Items.Add(new Separator { Margin = new Thickness(0, 4, 0, 4) });
+
+            var removeItem = CreateMenuItem(LocalizationService.Get("Home.Context.RemoveFolder"), "\uE74D", new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(211, 47, 47)));
+            removeItem.Click += async (_, _) =>
+            {
+                RecentFilesService.RemoveFolder(tile.Id);
+                await RefreshCurrentFolderAsync();
+            };
+            menu.Items.Add(removeItem);
+
+            menu.IsOpen = true;
         }
 
         private MenuItem CreateMenuItem(string text, string icon, System.Windows.Media.Brush foreground = null)
         {
             var item = new MenuItem { Padding = new Thickness(8, 6, 16, 6) };
             var stack = new StackPanel { Orientation = Orientation.Horizontal };
-            var iconText = new TextBlock { Text = icon, FontFamily = new System.Windows.Media.FontFamily("Segoe MDL2 Assets"), FontSize = 14, Width = 28, VerticalAlignment = VerticalAlignment.Center };
-            var textBlock = new TextBlock { Text = text, FontSize = 13, VerticalAlignment = VerticalAlignment.Center };
+            var iconText = new TextBlock
+            {
+                Text = icon,
+                FontFamily = new System.Windows.Media.FontFamily("Segoe MDL2 Assets"),
+                FontSize = 14,
+                Width = 28,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            var textBlock = new TextBlock
+            {
+                Text = text,
+                FontSize = 13,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+
             if (foreground != null)
             {
                 iconText.Foreground = foreground;
@@ -203,27 +392,115 @@ namespace Caelum.Pages
                 iconText.Foreground = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(60, 60, 60));
                 textBlock.Foreground = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(30, 30, 30));
             }
+
             stack.Children.Add(iconText);
             stack.Children.Add(textBlock);
             item.Header = stack;
             return item;
         }
 
+        private Style BuildContextMenuStyle()
+        {
+            var style = new Style(typeof(ContextMenu));
+            style.Setters.Add(new Setter(ContextMenu.BackgroundProperty,
+                new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromArgb(248, 255, 255, 255))));
+            style.Setters.Add(new Setter(ContextMenu.BorderBrushProperty,
+                new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromArgb(30, 0, 0, 0))));
+            style.Setters.Add(new Setter(ContextMenu.BorderThicknessProperty, new Thickness(1)));
+            style.Setters.Add(new Setter(ContextMenu.PaddingProperty, new Thickness(4, 8, 4, 8)));
+            style.Setters.Add(new Setter(ContextMenu.FontSizeProperty, 13.0));
+
+            var template = new ControlTemplate(typeof(ContextMenu));
+            var border = new FrameworkElementFactory(typeof(Border));
+            border.SetValue(Border.BackgroundProperty, new TemplateBindingExtension(ContextMenu.BackgroundProperty));
+            border.SetValue(Border.BorderBrushProperty, new TemplateBindingExtension(ContextMenu.BorderBrushProperty));
+            border.SetValue(Border.BorderThicknessProperty, new TemplateBindingExtension(ContextMenu.BorderThicknessProperty));
+            border.SetValue(Border.CornerRadiusProperty, new CornerRadius(8));
+            border.SetValue(Border.PaddingProperty, new TemplateBindingExtension(ContextMenu.PaddingProperty));
+            border.SetValue(Border.EffectProperty, new System.Windows.Media.Effects.DropShadowEffect
+            {
+                BlurRadius = 16,
+                ShadowDepth = 4,
+                Opacity = 0.15,
+                Color = System.Windows.Media.Colors.Black
+            });
+
+            var itemsPresenter = new FrameworkElementFactory(typeof(ItemsPresenter));
+            border.AppendChild(itemsPresenter);
+            template.VisualTree = border;
+            style.Setters.Add(new Setter(ContextMenu.TemplateProperty, template));
+            return style;
+        }
+
         private async Task RenameTileAsync(HomeTile tile)
         {
-            if (string.IsNullOrWhiteSpace(tile.Path) || !System.IO.File.Exists(tile.Path)) return;
+            if (tile == null || tile.IsAddTile)
+                return;
 
-            var mw = Window.GetWindow(this) as MainWindow;
-            if (mw == null) return;
-
-            // Modern input dialog
-            var inputWin = new Window
+            if (tile.IsFolder)
             {
-                Title = "Rename File",
+                var newName = PromptForInput(
+                    LocalizationService.Get("Home.RenameFolderTitle"),
+                    LocalizationService.Get("Home.RenameFolderPrompt"),
+                    tile.FileName,
+                    LocalizationService.Get("Home.RenameAction"));
+
+                if (string.IsNullOrWhiteSpace(newName) || string.Equals(newName.Trim(), tile.FileName, StringComparison.Ordinal))
+                    return;
+
+                RecentFilesService.RenameFolder(tile.Id, newName.Trim());
+                await RefreshCurrentFolderAsync();
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(tile.Path) || !File.Exists(tile.Path))
+                return;
+
+            var oldPath = tile.Path;
+            var newBaseName = PromptForInput(
+                LocalizationService.Get("Home.RenameTitle"),
+                LocalizationService.Get("Home.RenamePrompt"),
+                Path.GetFileNameWithoutExtension(oldPath),
+                LocalizationService.Get("Home.RenameAction"));
+
+            if (string.IsNullOrWhiteSpace(newBaseName))
+                return;
+
+            var directory = Path.GetDirectoryName(oldPath) ?? string.Empty;
+            var extension = Path.GetExtension(oldPath);
+            var newPath = Path.Combine(directory, newBaseName.Trim() + extension);
+
+            if (string.Equals(oldPath, newPath, StringComparison.OrdinalIgnoreCase))
+                return;
+
+            try
+            {
+                File.Move(oldPath, newPath);
+                RecentFilesService.UpdatePath(oldPath, newPath);
+                tile.SetPath(newPath);
+                tile.LastModified = File.GetLastWriteTime(newPath);
+                GetMainWindow()?.HandleFilePathChanged(oldPath, newPath);
+                await RefreshCurrentFolderAsync();
+            }
+            catch (Exception ex)
+            {
+                await ShowDialogAsync(LocalizationService.Get("Common.Error"), LocalizationService.Format("Home.RenameFailed", ex.Message));
+            }
+        }
+
+        private string PromptForInput(string title, string prompt, string initialValue, string confirmText)
+        {
+            var owner = Window.GetWindow(this) as MainWindow;
+            if (owner == null)
+                return null;
+
+            var inputWindow = new Window
+            {
+                Title = title,
                 Width = 430,
                 Height = 240,
                 WindowStartupLocation = WindowStartupLocation.CenterOwner,
-                Owner = mw,
+                Owner = owner,
                 ResizeMode = ResizeMode.NoResize,
                 WindowStyle = WindowStyle.None,
                 AllowsTransparency = true,
@@ -253,161 +530,89 @@ namespace Caelum.Pages
             grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
 
-            mainBorder.Child = grid;
-            inputWin.MouseLeftButtonDown += (s, ev) => { inputWin.DragMove(); };
-
             var titleLabel = new TextBlock
             {
-                Text = LocalizationService.Get("Home.RenameTitle"),
+                Text = title,
                 FontSize = 18,
                 FontWeight = FontWeights.SemiBold,
                 Foreground = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(30, 30, 30)),
                 Margin = new Thickness(0, 0, 0, 16)
             };
             Grid.SetRow(titleLabel, 0);
-            grid.Children.Add(titleLabel);
 
-            var label = new TextBlock
+            var promptLabel = new TextBlock
             {
-                Text = LocalizationService.Get("Home.RenamePrompt"),
+                Text = prompt,
                 FontSize = 14,
                 Foreground = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(80, 80, 80)),
                 Margin = new Thickness(0, 0, 0, 8)
             };
-            Grid.SetRow(label, 1);
-            grid.Children.Add(label);
+            Grid.SetRow(promptLabel, 1);
 
-            var nameBoxStyle = new Style(typeof(TextBox));
-            nameBoxStyle.Setters.Add(new Setter(TextBox.PaddingProperty, new Thickness(10, 8, 10, 8)));
-            nameBoxStyle.Setters.Add(new Setter(TextBox.FontSizeProperty, 14.0));
-            nameBoxStyle.Setters.Add(new Setter(TextBox.VerticalContentAlignmentProperty, VerticalAlignment.Center));
-
-            // To mimic modern rounded corner without custom template, wrap in Border (though standard TextBox template is square, setting borderbrush clear and wrapping helps)
             var textBoxBorder = new Border
             {
                 CornerRadius = new CornerRadius(6),
                 BorderBrush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(200, 200, 200)),
                 BorderThickness = new Thickness(1),
-                Background = System.Windows.Media.Brushes.White,
-                Padding = new Thickness(0)
+                Background = System.Windows.Media.Brushes.White
             };
             Grid.SetRow(textBoxBorder, 2);
 
-            var nameBox = new TextBox
+            var inputBox = new TextBox
             {
-                Text = System.IO.Path.GetFileNameWithoutExtension(tile.Path),
-                Style = nameBoxStyle,
+                Text = initialValue ?? string.Empty,
+                Padding = new Thickness(10, 8, 10, 8),
+                FontSize = 14,
+                VerticalContentAlignment = VerticalAlignment.Center,
                 BorderThickness = new Thickness(0),
                 Background = System.Windows.Media.Brushes.Transparent
             };
-            nameBox.SelectAll();
-            textBoxBorder.Child = nameBox;
-            grid.Children.Add(textBoxBorder);
+            inputBox.SelectAll();
+            textBoxBorder.Child = inputBox;
 
-            var btnPanel = new StackPanel
+            var buttonPanel = new StackPanel
             {
                 Orientation = Orientation.Horizontal,
                 HorizontalAlignment = HorizontalAlignment.Right,
                 VerticalAlignment = VerticalAlignment.Bottom
             };
-            Grid.SetRow(btnPanel, 3);
+            Grid.SetRow(buttonPanel, 3);
 
-            var cancelBtn = new Button
+            var cancelButton = new Button
             {
                 Content = LocalizationService.Get("Common.Cancel"),
                 Margin = new Thickness(0, 0, 10, 0),
                 IsCancel = true
             };
-            var secStyle = Application.Current.TryFindResource("DialogSecondaryButton") as Style;
-            if (secStyle != null)
-            {
-                cancelBtn.Style = secStyle;
-            }
-            else
-            {
-                cancelBtn.Width = 80;
-                cancelBtn.Height = 32;
-            }
-            cancelBtn.Click += (s, ev) => inputWin.DialogResult = false;
+            var secondaryStyle = Application.Current.TryFindResource("DialogSecondaryButton") as Style;
+            if (secondaryStyle != null)
+                cancelButton.Style = secondaryStyle;
+            cancelButton.Click += (_, _) => inputWindow.DialogResult = false;
 
-            var okBtn = new Button
+            var confirmButton = new Button
             {
-                Content = LocalizationService.Get("Home.RenameAction"),
+                Content = confirmText,
                 IsDefault = true
             };
-            var priStyle = Application.Current.TryFindResource("DialogPrimaryButton") as Style;
-            if (priStyle != null)
-            {
-                okBtn.Style = priStyle;
-            }
-            else
-            {
-                okBtn.Width = 80;
-                okBtn.Height = 32;
-            }
-            okBtn.Click += (s, ev) => inputWin.DialogResult = true;
+            var primaryStyle = Application.Current.TryFindResource("DialogPrimaryButton") as Style;
+            if (primaryStyle != null)
+                confirmButton.Style = primaryStyle;
+            confirmButton.Click += (_, _) => inputWindow.DialogResult = true;
 
-            btnPanel.Children.Add(cancelBtn);
-            btnPanel.Children.Add(okBtn);
-            grid.Children.Add(btnPanel);
+            buttonPanel.Children.Add(cancelButton);
+            buttonPanel.Children.Add(confirmButton);
 
-            inputWin.Content = mainBorder;
-            nameBox.Focus();
+            grid.Children.Add(titleLabel);
+            grid.Children.Add(promptLabel);
+            grid.Children.Add(textBoxBorder);
+            grid.Children.Add(buttonPanel);
 
-            if (inputWin.ShowDialog() == true)
-            {
-                var newName = nameBox.Text.Trim();
-                if (!string.IsNullOrEmpty(newName))
-                {
-                    var dir = System.IO.Path.GetDirectoryName(tile.Path);
-                    var ext = System.IO.Path.GetExtension(tile.Path);
-                    var newPath = System.IO.Path.Combine(dir, newName + ext);
-                    try
-                    {
-                        var oldPath = tile.Path;
-                        System.IO.File.Move(oldPath, newPath);
-                        tile.SetPath(newPath);
-                        tile.LastModified = System.IO.File.GetLastWriteTime(newPath);
-                        RecentFilesService.Remove(oldPath);
-                        RecentFilesService.AddOrPromote(newPath, tile.PageCount, System.IO.File.GetLastWriteTimeUtc(newPath));
-                    }
-                    catch (Exception ex)
-                    {
-                        await ShowDialogAsync(LocalizationService.Get("Common.Error"), LocalizationService.Format("Home.RenameFailed", ex.Message));
-                    }
-                }
-            }
-        }
+            mainBorder.Child = grid;
+            inputWindow.Content = mainBorder;
+            inputWindow.MouseLeftButtonDown += (_, _) => inputWindow.DragMove();
 
-        private Style BuildContextMenuStyle()
-        {
-            var style = new Style(typeof(ContextMenu));
-            style.Setters.Add(new Setter(ContextMenu.BackgroundProperty,
-                new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromArgb(248, 255, 255, 255))));
-            style.Setters.Add(new Setter(ContextMenu.BorderBrushProperty,
-                new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromArgb(30, 0, 0, 0))));
-            style.Setters.Add(new Setter(ContextMenu.BorderThicknessProperty, new Thickness(1)));
-            style.Setters.Add(new Setter(ContextMenu.PaddingProperty, new Thickness(4, 8, 4, 8)));
-            style.Setters.Add(new Setter(ContextMenu.FontSizeProperty, 13.0));
-
-            // Add rounded corners to ContextMenu
-            var template = new ControlTemplate(typeof(ContextMenu));
-            var border = new FrameworkElementFactory(typeof(Border));
-            border.SetValue(Border.BackgroundProperty, new TemplateBindingExtension(ContextMenu.BackgroundProperty));
-            border.SetValue(Border.BorderBrushProperty, new TemplateBindingExtension(ContextMenu.BorderBrushProperty));
-            border.SetValue(Border.BorderThicknessProperty, new TemplateBindingExtension(ContextMenu.BorderThicknessProperty));
-            border.SetValue(Border.CornerRadiusProperty, new CornerRadius(8));
-            border.SetValue(Border.PaddingProperty, new TemplateBindingExtension(ContextMenu.PaddingProperty));
-
-            var effect = new System.Windows.Media.Effects.DropShadowEffect { BlurRadius = 16, ShadowDepth = 4, Opacity = 0.15, Color = System.Windows.Media.Colors.Black };
-            border.SetValue(Border.EffectProperty, effect);
-
-            var itemsPresenter = new FrameworkElementFactory(typeof(ItemsPresenter));
-            border.AppendChild(itemsPresenter);
-            template.VisualTree = border;
-            style.Setters.Add(new Setter(ContextMenu.TemplateProperty, template));
-
-            return style;
+            inputBox.Focus();
+            return inputWindow.ShowDialog() == true ? inputBox.Text.Trim() : null;
         }
 
         private async Task PickAndOpenPdfAsync()
@@ -418,110 +623,319 @@ namespace Caelum.Pages
                 Title = LocalizationService.Get("Home.OpenPdfTitle")
             };
 
-            if (picker.ShowDialog() == true)
+            if (picker.ShowDialog() != true)
+                return;
+
+            var folderId = IsInsideFolder ? _currentFolderId : null;
+            await AddFileToLibraryAsync(picker.FileName, folderId, false);
+
+            if (Window.GetWindow(this) is MainWindow mw)
+                mw.NavigateActiveTabToFile(picker.FileName);
+            else
+                NavigationService?.Navigate(new EditorPage(picker.FileName));
+        }
+
+        private async Task CreateFolderAsync()
+        {
+            var name = PromptForInput(
+                LocalizationService.Get("Home.CreateFolderTitle"),
+                LocalizationService.Get("Home.CreateFolderPrompt"),
+                string.Empty,
+                LocalizationService.Get("Home.CreateFolderAction"));
+
+            if (string.IsNullOrWhiteSpace(name))
+                return;
+
+            RecentFilesService.CreateFolder(name, _currentFolderId);
+            await RefreshCurrentFolderAsync();
+            GetMainWindow()?.ShowToast(LocalizationService.Format("Home.FolderCreated", name.Trim()), "\uE8B7");
+        }
+
+        private async Task CreateEmptyNotebookAsync()
+        {
+            var owner = Window.GetWindow(this) as MainWindow;
+            var picker = new PageTemplatePickerWindow(
+                notebookCreationMode: true,
+                initialFolderPath: GetDefaultNotebookDirectory());
+
+            if (owner != null)
+                picker.Owner = owner;
+
+            if (picker.ShowDialog() != true || string.IsNullOrWhiteSpace(picker.SelectedFolderPath))
+                return;
+
+            Directory.CreateDirectory(picker.SelectedFolderPath);
+            var notebookPath = BuildNotebookFilePath(picker.SelectedFolderPath);
+
+            try
             {
-                var filePath = picker.FileName;
-                await AddToRecentFilesAsync(filePath);
-                if (Window.GetWindow(this) is MainWindow mw)
-                    mw.NavigateActiveTabToFile(filePath);
+                await PdfService.CreateBlankPdfAsync(notebookPath, template: picker.SelectedTemplate);
+                await AddFileToLibraryAsync(notebookPath, IsInsideFolder ? _currentFolderId : null, true);
+
+                if (owner != null)
+                    owner.NavigateActiveTabToFile(notebookPath);
                 else
-                    NavigationService?.Navigate(new EditorPage(filePath));
+                    NavigationService?.Navigate(new EditorPage(notebookPath));
+            }
+            catch (Exception ex)
+            {
+                await ShowDialogAsync(LocalizationService.Get("Common.Error"), LocalizationService.Format("Home.CreateNotebookFailed", ex.Message));
             }
         }
 
-        private async Task AddToRecentFilesAsync(string path)
+        private async Task AddFileToLibraryAsync(string path, string folderId, bool isNotebook)
         {
             if (string.IsNullOrWhiteSpace(path))
-            {
                 return;
-            }
 
-            if (!string.Equals(System.IO.Path.GetExtension(path), ".pdf", StringComparison.OrdinalIgnoreCase))
-            {
+            if (!string.Equals(Path.GetExtension(path), ".pdf", StringComparison.OrdinalIgnoreCase))
                 return;
-            }
 
-            for (int i = HomeTiles.Count - 1; i >= 0; i--)
-            {
-                var item = HomeTiles[i];
-                if (!item.IsAddTile && string.Equals(item.Path, path, StringComparison.OrdinalIgnoreCase))
-                {
-                    HomeTiles.RemoveAt(i);
-                }
-            }
+            DateTime? lastModifiedUtc = null;
+            if (File.Exists(path))
+                lastModifiedUtc = File.GetLastWriteTimeUtc(path);
 
-            var insertIndex = Math.Min(1, HomeTiles.Count);
-            HomeTiles.Insert(insertIndex, HomeTile.CreateFileTile(path));
-            RecentFilesService.AddOrPromote(path);
-            RefreshSelectionState();
-            await Task.CompletedTask;
+            RecentFilesService.AddOrPromote(path, null, lastModifiedUtc, folderId, isNotebook);
+            await RefreshCurrentFolderAsync();
         }
 
-        private async Task OpenRecentTileAsync(HomeTile tile)
+        private async Task OpenFileTileAsync(HomeTile tile)
         {
-            if (tile.IsAddTile || string.IsNullOrWhiteSpace(tile.Path))
-            {
+            if (tile == null || !tile.IsFile || string.IsNullOrWhiteSpace(tile.Path))
                 return;
-            }
 
-            if (!string.Equals(System.IO.Path.GetExtension(tile.Path), ".pdf", StringComparison.OrdinalIgnoreCase))
+            if (!string.Equals(Path.GetExtension(tile.Path), ".pdf", StringComparison.OrdinalIgnoreCase))
             {
-                await RemoveMissingRecentTileAsync(tile);
+                await RemoveFileTileAsync(tile);
                 await ShowDialogAsync(LocalizationService.Get("Common.Error"), LocalizationService.Get("Home.ErrorUnsupportedType"));
                 return;
             }
 
             try
             {
-                if (!System.IO.File.Exists(tile.Path))
+                if (!File.Exists(tile.Path))
                 {
-                    await RemoveMissingRecentTileAsync(tile);
+                    await RemoveFileTileAsync(tile);
                     await ShowDialogAsync(LocalizationService.Get("Common.Error"), LocalizationService.Get("Home.ErrorFileNotFound"));
                     return;
                 }
+
+                RecentFilesService.AddOrPromote(tile.Path);
                 if (Window.GetWindow(this) is MainWindow mw)
                     mw.NavigateActiveTabToFile(tile.Path);
                 else
                     NavigationService?.Navigate(new EditorPage(tile.Path));
             }
-            catch (Exception)
+            catch
             {
-                await RemoveMissingRecentTileAsync(tile);
+                await RemoveFileTileAsync(tile);
                 await ShowDialogAsync(LocalizationService.Get("Common.Error"), LocalizationService.Get("Home.ErrorAccessDenied"));
             }
         }
 
-        private async Task RemoveMissingRecentTileAsync(HomeTile tile)
+        private async Task RemoveFileTileAsync(HomeTile tile)
         {
-            for (int i = 0; i < HomeTiles.Count; i++)
-            {
-                var item = HomeTiles[i];
-                if (!item.IsAddTile && string.Equals(item.Path, tile.Path, StringComparison.OrdinalIgnoreCase))
-                {
-                    HomeTiles.RemoveAt(i);
-                    RecentFilesService.Remove(tile.Path);
-                    RefreshSelectionState();
-                    await Task.CompletedTask;
-                    return;
-                }
-            }
+            if (tile == null || !tile.IsFile)
+                return;
+
+            RecentFilesService.Remove(tile.Path);
+            await RefreshCurrentFolderAsync();
         }
 
         private async Task ShowDialogAsync(string title, string content)
         {
-            var mw = Window.GetWindow(this);
-            if (mw != null)
-            {
-                await DialogService.ShowInfoAsync(mw, title, content);
-            }
+            var owner = Window.GetWindow(this);
+            if (owner != null)
+                await DialogService.ShowInfoAsync(owner, title, content);
             else
-            {
                 MessageBox.Show(content, title, MessageBoxButton.OK, MessageBoxImage.Information);
-            }
-            await Task.CompletedTask;
         }
 
-        // 鈹€鈹€鈹€ Smooth Scrolling 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+        private void NavigateUpButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (!IsInsideFolder)
+                return;
+
+            var parentFolder = RecentFilesService.GetFolder(_currentFolderId)?.ParentFolderId;
+            _currentFolderId = parentFolder ?? string.Empty;
+            _currentFolderName = RecentFilesService.GetFolder(_currentFolderId)?.DisplayName ?? string.Empty;
+            _ = RefreshCurrentFolderAsync();
+        }
+
+        public bool ShouldDeferWindowFileDrop(DependencyObject originalSource, IDataObject data)
+        {
+            return data != null &&
+                   data.GetDataPresent(DataFormats.FileDrop) &&
+                   GetFolderTileFromSource(originalSource) != null;
+        }
+
+        private void FileTile_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            if (IsSelectionMode)
+            {
+                _dragCandidateTile = null;
+                return;
+            }
+
+            if (sender is not FrameworkElement element || element.Tag is not HomeTile tile || !tile.IsFile)
+            {
+                _dragCandidateTile = null;
+                return;
+            }
+
+            _dragCandidateTile = tile;
+            _dragStartPoint = e.GetPosition(this);
+        }
+
+        private void FileTile_MouseMove(object sender, MouseEventArgs e)
+        {
+            if (_dragCandidateTile == null || e.LeftButton != MouseButtonState.Pressed)
+                return;
+
+            var currentPosition = e.GetPosition(this);
+            if (Math.Abs(currentPosition.X - _dragStartPoint.X) < SystemParameters.MinimumHorizontalDragDistance &&
+                Math.Abs(currentPosition.Y - _dragStartPoint.Y) < SystemParameters.MinimumVerticalDragDistance)
+                return;
+
+            var dataObject = new DataObject(LibraryTilePathDataFormat, _dragCandidateTile.Path);
+            DragDrop.DoDragDrop((DependencyObject)sender, dataObject, DragDropEffects.Move);
+            _dragCandidateTile = null;
+        }
+
+        private void FolderTile_DragEnter(object sender, DragEventArgs e)
+        {
+            UpdateFolderDropState(sender, e, true);
+        }
+
+        private void FolderTile_DragOver(object sender, DragEventArgs e)
+        {
+            UpdateFolderDropState(sender, e, true);
+        }
+
+        private void FolderTile_DragLeave(object sender, DragEventArgs e)
+        {
+            if (sender is FrameworkElement element && element.Tag is HomeTile tile)
+                tile.IsDropTarget = false;
+        }
+
+        private async void FolderTile_Drop(object sender, DragEventArgs e)
+        {
+            if (sender is not FrameworkElement element || element.Tag is not HomeTile tile || !tile.IsFolder)
+                return;
+
+            tile.IsDropTarget = false;
+            var movedAny = false;
+
+            if (e.Data.GetDataPresent(LibraryTilePathDataFormat))
+            {
+                var filePath = e.Data.GetData(LibraryTilePathDataFormat) as string;
+                if (!string.IsNullOrWhiteSpace(filePath))
+                    movedAny = RecentFilesService.MoveToFolder(filePath, tile.Id);
+            }
+            else if (e.Data.GetDataPresent(DataFormats.FileDrop) &&
+                     e.Data.GetData(DataFormats.FileDrop) is string[] files)
+            {
+                foreach (var file in files.Where(IsPdfFile))
+                {
+                    RecentFilesService.AddOrPromote(
+                        file,
+                        null,
+                        File.Exists(file) ? File.GetLastWriteTimeUtc(file) : null,
+                        tile.Id,
+                        false);
+                    movedAny = true;
+                }
+            }
+
+            if (movedAny)
+            {
+                await RefreshCurrentFolderAsync();
+                GetMainWindow()?.ShowToast(LocalizationService.Format("Home.MovedToFolder", tile.FileName), "\uE8B7");
+            }
+
+            e.Handled = true;
+        }
+
+        private void UpdateFolderDropState(object sender, DragEventArgs e, bool isActive)
+        {
+            if (sender is not FrameworkElement element || element.Tag is not HomeTile tile || !tile.IsFolder)
+                return;
+
+            var canAcceptDrop = e.Data.GetDataPresent(LibraryTilePathDataFormat) ||
+                                (e.Data.GetDataPresent(DataFormats.FileDrop) &&
+                                 e.Data.GetData(DataFormats.FileDrop) is string[] files &&
+                                 files.Any(IsPdfFile));
+
+            tile.IsDropTarget = isActive && canAcceptDrop;
+            e.Effects = canAcceptDrop ? DragDropEffects.Move : DragDropEffects.None;
+            e.Handled = true;
+        }
+
+        private HomeTile GetFolderTileFromSource(DependencyObject source)
+        {
+            var current = source;
+            while (current != null)
+            {
+                if (current is FrameworkElement element &&
+                    element.Tag is HomeTile tile &&
+                    tile.IsFolder)
+                {
+                    return tile;
+                }
+
+                current = System.Windows.Media.VisualTreeHelper.GetParent(current);
+            }
+
+            return null;
+        }
+
+        private static bool IsPdfFile(string path)
+        {
+            return !string.IsNullOrWhiteSpace(path) &&
+                   string.Equals(Path.GetExtension(path), ".pdf", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static string SanitizeFileName(string name)
+        {
+            var invalidChars = Path.GetInvalidFileNameChars();
+            var sanitized = new string((name ?? string.Empty).Where(ch => !invalidChars.Contains(ch)).ToArray()).Trim();
+            return string.IsNullOrWhiteSpace(sanitized) ? "Notebook" : sanitized;
+        }
+
+        private static string GetDefaultNotebookDirectory()
+        {
+            var documentsPath = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+            if (!string.IsNullOrWhiteSpace(documentsPath))
+                return documentsPath;
+
+            var desktopPath = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+            return string.IsNullOrWhiteSpace(desktopPath)
+                ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Caelum", "Notebooks")
+                : desktopPath;
+        }
+
+        private static string BuildNotebookFilePath(string directory)
+        {
+            var notebookName = SanitizeFileName(LocalizationService.Get("Home.NewNotebookName"));
+            var timestamp = DateTime.Now.ToString("yyyyMMdd-HHmmss", LocalizationService.CurrentCulture);
+            var baseName = $"{notebookName} {timestamp}";
+            var filePath = Path.Combine(directory, $"{baseName}.pdf");
+            var counter = 1;
+
+            while (File.Exists(filePath))
+            {
+                filePath = Path.Combine(directory, $"{baseName} ({counter}).pdf");
+                counter++;
+            }
+
+            return filePath;
+        }
+
+        private MainWindow GetMainWindow()
+        {
+            return Application.Current.MainWindow as MainWindow;
+        }
+
         private double _targetVerticalOffset;
         private bool _smoothScrollInitialized;
         private double _scrollAnimationTarget;
@@ -575,9 +989,21 @@ namespace Caelum.Pages
 
     public sealed class HomeTile : INotifyPropertyChanged
     {
+        public string Id { get; private set; } = string.Empty;
+
         public bool IsAddTile { get; private set; }
 
-        public string Path { get; private set; }
+        public bool IsFolder { get; private set; }
+
+        public bool IsFile => !IsAddTile && !IsFolder;
+
+        public bool IsNotebook { get; private set; }
+
+        public string ParentFolderId { get; private set; } = string.Empty;
+
+        public string Path { get; private set; } = string.Empty;
+
+        public int SortPriority => IsAddTile ? 0 : IsFolder ? 1 : 2;
 
         private bool _isSelected;
         public bool IsSelected
@@ -590,36 +1016,64 @@ namespace Caelum.Pages
             }
         }
 
-        public void SetPath(string newPath)
+        private bool _isDropTarget;
+        public bool IsDropTarget
         {
-            Path = newPath;
-            OnPropertyChanged(nameof(Path));
-            OnPropertyChanged(nameof(FileName));
-            OnPropertyChanged(nameof(InfoText));
+            get => _isDropTarget;
+            set
+            {
+                _isDropTarget = value;
+                OnPropertyChanged(nameof(IsDropTarget));
+            }
         }
 
         private int _pageCount;
         public int PageCount
         {
             get => _pageCount;
-            set { _pageCount = value; OnPropertyChanged(nameof(PageCount)); OnPropertyChanged(nameof(InfoText)); }
+            set
+            {
+                _pageCount = value;
+                OnPropertyChanged(nameof(PageCount));
+                OnPropertyChanged(nameof(InfoText));
+            }
+        }
+
+        private int _childCount;
+        public int ChildCount
+        {
+            get => _childCount;
+            set
+            {
+                _childCount = value;
+                OnPropertyChanged(nameof(ChildCount));
+                OnPropertyChanged(nameof(InfoText));
+            }
         }
 
         private DateTime _lastModified;
         public DateTime LastModified
         {
             get => _lastModified;
-            set { _lastModified = value; OnPropertyChanged(nameof(LastModified)); OnPropertyChanged(nameof(InfoText)); }
+            set
+            {
+                _lastModified = value;
+                OnPropertyChanged(nameof(LastModified));
+                OnPropertyChanged(nameof(InfoText));
+            }
         }
+
+        private string _displayName = string.Empty;
 
         public string FileName
         {
             get
             {
+                if (IsFolder)
+                    return _displayName;
+
                 if (string.IsNullOrWhiteSpace(Path))
-                {
                     return string.Empty;
-                }
 
                 return System.IO.Path.GetFileName(Path);
             }
@@ -629,66 +1083,79 @@ namespace Caelum.Pages
         {
             get
             {
-                if (IsAddTile || string.IsNullOrWhiteSpace(Path)) return string.Empty;
+                if (IsAddTile)
+                    return string.Empty;
+
+                if (IsFolder)
+                    return LocalizationService.Format("Home.Info.Items", ChildCount);
+
+                if (string.IsNullOrWhiteSpace(Path))
+                    return string.Empty;
+
                 var parts = new List<string>();
-                if (PageCount > 0) parts.Add(LocalizationService.Format("Home.Info.Pages", PageCount));
-                if (LastModified != default) parts.Add(LastModified.ToString("d", LocalizationService.CurrentCulture));
+                if (IsNotebook)
+                    parts.Add(LocalizationService.Get("Home.Info.Notebook"));
+                if (PageCount > 0)
+                    parts.Add(LocalizationService.Format("Home.Info.Pages", PageCount));
+                if (LastModified != default)
+                    parts.Add(LastModified.ToString("d", LocalizationService.CurrentCulture));
                 return string.Join(" · ", parts);
             }
         }
 
+        public void SetPath(string newPath)
+        {
+            Path = newPath ?? string.Empty;
+            OnPropertyChanged(nameof(Path));
+            OnPropertyChanged(nameof(FileName));
+            OnPropertyChanged(nameof(InfoText));
+        }
+
         public void RefreshDisplay()
         {
+            OnPropertyChanged(nameof(FileName));
             OnPropertyChanged(nameof(InfoText));
         }
 
         public event PropertyChangedEventHandler PropertyChanged;
-        private void OnPropertyChanged(string name) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
+
+        private void OnPropertyChanged(string propertyName)
+        {
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+        }
 
         public static HomeTile CreateAddTile()
         {
-            return new HomeTile { IsAddTile = true, Path = string.Empty };
-        }
-
-        public static HomeTile CreateFileTile(string path, int pageCount = 0, DateTime? lastModified = null)
-        {
             return new HomeTile
             {
-                IsAddTile = false,
-                Path = path ?? string.Empty,
-                _pageCount = pageCount,
-                _lastModified = lastModified?.ToLocalTime() ?? default
+                IsAddTile = true
             };
         }
 
         public static HomeTile CreateFileTile(RecentFileEntry entry)
         {
-            if (entry == null)
-                return CreateFileTile(string.Empty);
+            return new HomeTile
+            {
+                Id = entry?.Id ?? string.Empty,
+                Path = entry?.Path ?? string.Empty,
+                ParentFolderId = entry?.ParentFolderId ?? string.Empty,
+                IsNotebook = entry?.IsNotebook == true,
+                _pageCount = entry?.PageCount ?? 0,
+                _lastModified = entry?.LastModifiedUtc?.ToLocalTime() ?? default
+            };
+        }
 
-            return CreateFileTile(entry.Path, entry.PageCount, entry.LastModifiedUtc);
+        public static HomeTile CreateFolderTile(RecentFileEntry entry, int childCount)
+        {
+            return new HomeTile
+            {
+                Id = entry?.Id ?? string.Empty,
+                IsFolder = true,
+                ParentFolderId = entry?.ParentFolderId ?? string.Empty,
+                _displayName = entry?.DisplayName ?? string.Empty,
+                _childCount = childCount,
+                _lastModified = entry?.LastModifiedUtc?.ToLocalTime() ?? default
+            };
         }
     }
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

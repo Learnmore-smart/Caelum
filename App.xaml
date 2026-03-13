@@ -17,15 +17,18 @@
                 <Setter Property="Template">
                     <Setter.Value>
                         <ControlTemplate TargetType="Thumb">
-                            <Border x:Name="ThumbBorder" Background="#30888888" CornerRadius="2.5" MinHeight="30"/>
+                            <Border x:Name="ThumbBorder"
+                                    Margin="1"
+                                    Background="#B4556474"
+                                    BorderBrush="#22FFFFFF"
+                                    BorderThickness="1"
+                                    CornerRadius="6"/>
                             <ControlTemplate.Triggers>
                                 <Trigger Property="IsMouseOver" Value="True">
-                                    <Setter TargetName="ThumbBorder" Property="Background" Value="#55666666"/>
-                                    <Setter TargetName="ThumbBorder" Property="CornerRadius" Value="4"/>
+                                    <Setter TargetName="ThumbBorder" Property="Background" Value="#CC334155"/>
                                 </Trigger>
                                 <Trigger Property="IsDragging" Value="True">
-                                    <Setter TargetName="ThumbBorder" Property="Background" Value="#70555555"/>
-                                    <Setter TargetName="ThumbBorder" Property="CornerRadius" Value="4"/>
+                                    <Setter TargetName="ThumbBorder" Property="Background" Value="#E81F2937"/>
                                 </Trigger>
                             </ControlTemplate.Triggers>
                         </ControlTemplate>
@@ -33,18 +36,26 @@
                 </Setter>
             </Style>
 
+            <Style x:Key="SleekVerticalScrollBarThumb" TargetType="Thumb" BasedOn="{StaticResource SleekScrollBarThumb}">
+                <Setter Property="MinHeight" Value="38"/>
+            </Style>
+
+            <Style x:Key="SleekHorizontalScrollBarThumb" TargetType="Thumb" BasedOn="{StaticResource SleekScrollBarThumb}">
+                <Setter Property="MinWidth" Value="38"/>
+            </Style>
+
             <Style x:Key="SleekVerticalScrollBar" TargetType="ScrollBar">
                 <Setter Property="OverridesDefaultStyle" Value="True"/>
-                <Setter Property="Width" Value="5"/>
-                <Setter Property="MinWidth" Value="5"/>
-                <Setter Property="Margin" Value="0,6,3,6"/>
+                <Setter Property="Width" Value="12"/>
+                <Setter Property="MinWidth" Value="12"/>
+                <Setter Property="Margin" Value="0,14,10,14"/>
                 <Setter Property="Template">
                     <Setter.Value>
                         <ControlTemplate TargetType="ScrollBar">
-                            <Border Background="Transparent" CornerRadius="2.5">
+                            <Border Background="#1F94A3B8" BorderBrush="#18FFFFFF" BorderThickness="1" CornerRadius="8">
                                 <Track x:Name="PART_Track" IsDirectionReversed="True">
                                     <Track.Thumb>
-                                        <Thumb Style="{StaticResource SleekScrollBarThumb}"/>
+                                        <Thumb Style="{StaticResource SleekVerticalScrollBarThumb}"/>
                                     </Track.Thumb>
                                 </Track>
                             </Border>
@@ -53,7 +64,32 @@
                 </Setter>
                 <Style.Triggers>
                     <Trigger Property="IsMouseOver" Value="True">
-                        <Setter Property="Width" Value="8"/>
+                        <Setter Property="Width" Value="14"/>
+                    </Trigger>
+                </Style.Triggers>
+            </Style>
+
+            <Style x:Key="SleekHorizontalScrollBar" TargetType="ScrollBar">
+                <Setter Property="OverridesDefaultStyle" Value="True"/>
+                <Setter Property="Height" Value="12"/>
+                <Setter Property="MinHeight" Value="12"/>
+                <Setter Property="Margin" Value="14,0,14,10"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="ScrollBar">
+                            <Border Background="#1F94A3B8" BorderBrush="#18FFFFFF" BorderThickness="1" CornerRadius="8">
+                                <Track x:Name="PART_Track">
+                                    <Track.Thumb>
+                                        <Thumb Style="{StaticResource SleekHorizontalScrollBarThumb}"/>
+                                    </Track.Thumb>
+                                </Track>
+                            </Border>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+                <Style.Triggers>
+                    <Trigger Property="IsMouseOver" Value="True">
+                        <Setter Property="Height" Value="14"/>
                     </Trigger>
                 </Style.Triggers>
             </Style>
@@ -64,9 +100,22 @@
                     <Setter.Value>
                         <ControlTemplate TargetType="ScrollViewer">
                             <Grid>
-                                <ScrollContentPresenter Margin="{TemplateBinding Padding}"
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="*"/>
+                                    <RowDefinition Height="Auto"/>
+                                </Grid.RowDefinitions>
+
+                                <ScrollContentPresenter Grid.Row="0"
+                                                        Grid.Column="0"
+                                                        Margin="{TemplateBinding Padding}"
                                                         CanContentScroll="{TemplateBinding CanContentScroll}"/>
                                 <ScrollBar x:Name="PART_VerticalScrollBar"
+                                           Grid.Row="0"
+                                           Grid.Column="1"
                                            HorizontalAlignment="Right"
                                            Orientation="Vertical"
                                            Style="{StaticResource SleekVerticalScrollBar}"
@@ -74,11 +123,23 @@
                                            Value="{TemplateBinding VerticalOffset}"
                                            ViewportSize="{TemplateBinding ViewportHeight}"
                                            Visibility="{TemplateBinding ComputedVerticalScrollBarVisibility}"
-                                           Opacity="0.15"/>
+                                           Opacity="0.96"/>
+                                <ScrollBar x:Name="PART_HorizontalScrollBar"
+                                           Grid.Row="1"
+                                           Grid.Column="0"
+                                           Orientation="Horizontal"
+                                           Style="{StaticResource SleekHorizontalScrollBar}"
+                                           Maximum="{TemplateBinding ScrollableWidth}"
+                                           Value="{TemplateBinding HorizontalOffset}"
+                                           ViewportSize="{TemplateBinding ViewportWidth}"
+                                           Visibility="{TemplateBinding ComputedHorizontalScrollBarVisibility}"
+                                           Opacity="0.96"/>
+                                <Border Grid.Row="1" Grid.Column="1" Background="Transparent"/>
                             </Grid>
                             <ControlTemplate.Triggers>
                                 <Trigger Property="IsMouseOver" Value="True">
                                     <Setter TargetName="PART_VerticalScrollBar" Property="Opacity" Value="1"/>
+                                    <Setter TargetName="PART_HorizontalScrollBar" Property="Opacity" Value="1"/>
                                 </Trigger>
                             </ControlTemplate.Triggers>
                         </ControlTemplate>

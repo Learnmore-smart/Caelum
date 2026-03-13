@@ -13,6 +13,7 @@ using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Shapes;
+using Microsoft.Win32;
 using Caelum.Controls;
 using Caelum.Models;
 using Caelum.Services;
@@ -40,6 +41,10 @@ namespace Caelum.Pages
         private bool _isDirty;
         private string _currentPdfPath;
         public string CurrentPdfPath => _currentPdfPath;
+        private bool _promptSaveAsAfterLoad;
+        private bool _hasPromptedForSaveAs;
+        private string _pendingLibraryFolderId;
+        private bool _isNotebookDraft;
 
         private TextBox _selectedTextBox;
         private Popup _textBoxPopup;
@@ -74,15 +79,32 @@ namespace Caelum.Pages
         private double _dragStartY;
 
         // Undo/Redo
-        private interface IUndoAction { void Undo(); void Redo(); }
+        private interface IUndoAction
+        {
+            bool LeavesDocumentDirty { get; }
+            Task UndoAsync();
+            Task RedoAsync();
+        }
+
         private class StrokeAddedAction : IUndoAction
         {
             private readonly PdfPageControl _page;
             private readonly System.Windows.Ink.Stroke _stroke;
             public StrokeAddedAction(PdfPageControl page, System.Windows.Ink.Stroke stroke) { _page = page; _stroke = stroke; }
-            public void Undo() => _page.RemoveStrokeQuiet(_stroke);
-            public void Redo() => _page.AddStrokeQuiet(_stroke);
+            public bool LeavesDocumentDirty => true;
+            public Task UndoAsync()
+            {
+                _page.RemoveStrokeQuiet(_stroke);
+                return Task.CompletedTask;
+            }
+
+            public Task RedoAsync()
+            {
+                _page.AddStrokeQuiet(_stroke);
+                return Task.CompletedTask;
+            }
         }
+
         private class SelectionMoveAction : IUndoAction
         {
             private readonly PdfPageControl _page;
@@ -99,9 +121,20 @@ namespace Caelum.Pages
                 _strokes = strokes;
                 _containers = containers;
             }
-            public void Undo() => _page.MoveItemsDirectly(_strokes, _containers, -_deltaX, -_deltaY);
-            public void Redo() => _page.MoveItemsDirectly(_strokes, _containers, _deltaX, _deltaY);
+            public bool LeavesDocumentDirty => true;
+            public Task UndoAsync()
+            {
+                _page.MoveItemsDirectly(_strokes, _containers, -_deltaX, -_deltaY);
+                return Task.CompletedTask;
+            }
+
+            public Task RedoAsync()
+            {
+                _page.MoveItemsDirectly(_strokes, _containers, _deltaX, _deltaY);
+                return Task.CompletedTask;
+            }
         }
+
         private class SelectionResizeAction : IUndoAction
         {
             private readonly PdfPageControl _page;
@@ -118,9 +151,42 @@ namespace Caelum.Pages
                 _strokes = strokes;
                 _containers = containers;
             }
-            public void Undo() => _page.ScaleItemsDirectly(_strokes, _containers, 1.0 / _totalScale, _anchor);
-            public void Redo() => _page.ScaleItemsDirectly(_strokes, _containers, _totalScale, _anchor);
+            public bool LeavesDocumentDirty => true;
+            public Task UndoAsync()
+            {
+                _page.ScaleItemsDirectly(_strokes, _containers, 1.0 / _totalScale, _anchor);
+                return Task.CompletedTask;
+            }
+
+            public Task RedoAsync()
+            {
+                _page.ScaleItemsDirectly(_strokes, _containers, _totalScale, _anchor);
+                return Task.CompletedTask;
+            }
         }
+
+        private sealed class DocumentSnapshotAction : IUndoAction
+        {
+            private readonly EditorPage _owner;
+            private readonly byte[] _beforeBytes;
+            private readonly byte[] _afterBytes;
+            private readonly int _undoFocusPageIndex;
+            private readonly int _redoFocusPageIndex;
+
+            public DocumentSnapshotAction(EditorPage owner, byte[] beforeBytes, byte[] afterBytes, int undoFocusPageIndex, int redoFocusPageIndex)
+            {
+                _owner = owner;
+                _beforeBytes = beforeBytes;
+                _afterBytes = afterBytes;
+                _undoFocusPageIndex = undoFocusPageIndex;
+                _redoFocusPageIndex = redoFocusPageIndex;
+            }
+
+            public bool LeavesDocumentDirty => false;
+            public Task UndoAsync() => _owner.ApplyDocumentSnapshotAsync(_beforeBytes, _undoFocusPageIndex);
+            public Task RedoAsync() => _owner.ApplyDocumentSnapshotAsync(_afterBytes, _redoFocusPageIndex);
+        }
+
         private readonly List<IUndoAction> _undoStack = new List<IUndoAction>();
         private readonly List<IUndoAction> _redoStack = new List<IUndoAction>();
 
@@ -137,8 +203,10 @@ namespace Caelum.Pages
         private readonly List<PdfPageControl> _pageControls = new List<PdfPageControl>();
         private readonly List<double> _pageTopOffsets = new List<double>();
         private readonly List<double> _pageHeights = new List<double>();
+        private readonly List<Button> _pageDeleteButtons = new List<Button>();
+        private readonly List<Button> _pageInsertButtons = new List<Button>();
         private CancellationTokenSource _scrollReRenderCts;
-        private const double PageSpacing = 20.0;
+        private const double PageSpacing = 28.0;
 
         // Smooth scrolling
         private double _targetVerticalOffset;
@@ -648,10 +716,58 @@ namespace Caelum.Pages
             }
         }
 
-        public EditorPage(string filePath) : this()
+        public EditorPage(string filePath) : this(filePath, false, null, false)
+        {
+        }
+
+        public EditorPage(string filePath, bool promptSaveAsAfterLoad, string pendingLibraryFolderId, bool isNotebookDraft) : this()
         {
             _currentPdfPath = filePath;
+            _promptSaveAsAfterLoad = promptSaveAsAfterLoad;
+            _pendingLibraryFolderId = pendingLibraryFolderId;
+            _isNotebookDraft = isNotebookDraft;
             Loaded += async (s, e) => await LoadPdfAsync(filePath);
+        }
+
+        public void UpdateCurrentPdfPath(string filePath)
+        {
+            _currentPdfPath = filePath;
+        }
+
+        private bool IsEditableTextInputFocused()
+        {
+            if (Keyboard.FocusedElement is not DependencyObject focusedElement)
+                return false;
+
+            var textBoxBase = FindAncestor<TextBoxBase>(focusedElement);
+            if (textBoxBase != null)
+                return textBoxBase.IsEnabled && !textBoxBase.IsReadOnly;
+
+            var comboBox = FindAncestor<ComboBox>(focusedElement);
+            return comboBox != null && comboBox.IsEnabled && comboBox.IsEditable;
+        }
+
+        private async Task<bool> TryHandleUndoRedoShortcutAsync(KeyEventArgs e)
+        {
+            if (IsEditableTextInputFocused())
+                return false;
+
+            if (Keyboard.Modifiers == ModifierKeys.Control && e.Key == Key.Z)
+            {
+                e.Handled = true;
+                await PerformUndoAsync();
+                return true;
+            }
+
+            if ((Keyboard.Modifiers == ModifierKeys.Control && e.Key == Key.Y) ||
+                (Keyboard.Modifiers == (ModifierKeys.Control | ModifierKeys.Shift) && e.Key == Key.Z))
+            {
+                e.Handled = true;
+                await PerformRedoAsync();
+                return true;
+            }
+
+            return false;
         }
 
         private async void EditorPage_KeyDown(object sender, KeyEventArgs e)
@@ -674,16 +790,6 @@ namespace Caelum.Pages
                     mw?.ShowToast("Text copied", "\uE8C8", 1500);
                     e.Handled = true;
                 }
-            }
-            else if (Keyboard.Modifiers == ModifierKeys.Control && e.Key == Key.Z)
-            {
-                PerformUndo();
-                e.Handled = true;
-            }
-            else if (Keyboard.Modifiers == ModifierKeys.Control && e.Key == Key.Y)
-            {
-                PerformRedo();
-                e.Handled = true;
             }
             else if (Keyboard.Modifiers == ModifierKeys.Control && (e.Key == Key.D0 || e.Key == Key.NumPad0))
             {
@@ -759,6 +865,16 @@ namespace Caelum.Pages
                 _isHScrollAnimating = false;
                 System.Windows.Media.CompositionTarget.Rendering -= CompositionTarget_HScrollRendering;
             }
+        }
+
+        private void SyncSmoothScrollState(bool cancelAnimations = false)
+        {
+            if (cancelAnimations)
+                CancelSmoothScroll();
+
+            _targetVerticalOffset = PdfScrollViewer.VerticalOffset;
+            _targetHorizontalOffset = PdfScrollViewer.HorizontalOffset;
+            _smoothScrollInitialized = true;
         }
 
         // 闁冲厜鍋撻柍鍏夊亾闁冲厜鍋?Zoom around a point (keeps that point stable on screen) 闁冲厜鍋撻柍鍏夊亾闁冲厜鍋?
@@ -1105,10 +1221,7 @@ namespace Caelum.Pages
 
             UpdateZoomLabel();
 
-            // Sync smooth scroll state
-            _targetVerticalOffset = PdfScrollViewer.VerticalOffset;
-            _targetHorizontalOffset = PdfScrollViewer.HorizontalOffset;
-            _smoothScrollInitialized = true;
+            SyncSmoothScrollState();
 
             // Re-render pages at higher DPI when zoomed in (debounced)
             ScheduleReRenderForZoom();
@@ -1153,6 +1266,14 @@ namespace Caelum.Pages
         {
             UpdatePageNumberIndicator();
             UpdateSelectedTextBoxPopupVisibility(forceRefresh: e.VerticalChange != 0 || e.HorizontalChange != 0);
+
+            if (!_isScrollAnimating)
+                _targetVerticalOffset = PdfScrollViewer.VerticalOffset;
+
+            if (!_isHScrollAnimating)
+                _targetHorizontalOffset = PdfScrollViewer.HorizontalOffset;
+
+            _smoothScrollInitialized = true;
 
             _scrollReRenderCts?.Cancel();
             _scrollReRenderCts = new CancellationTokenSource();
@@ -1216,7 +1337,7 @@ namespace Caelum.Pages
 
             double newOffset = GetScaledPageTop(anchor.AnchorPage.PageIndex) - anchor.OffsetFromViewportTop;
             PdfScrollViewer.ScrollToVerticalOffset(Math.Max(0, newOffset));
-            _targetVerticalOffset = PdfScrollViewer.VerticalOffset;
+            SyncSmoothScrollState();
         }
 
         private async Task ReRenderPagesAsync(List<PdfPageControl> pages, double dpiScale, CancellationToken token)
@@ -1302,26 +1423,26 @@ namespace Caelum.Pages
             return result;
         }
 
-        private void PerformUndo()
+        private async Task PerformUndoAsync()
         {
             if (_undoStack.Count == 0) return;
             var action = _undoStack[_undoStack.Count - 1];
             _undoStack.RemoveAt(_undoStack.Count - 1);
-            action.Undo();
+            await action.UndoAsync();
             _redoStack.Add(action);
             UpdateUndoRedoButtons();
-            MarkDirty();
+            ApplyDirtyStateForAction(action);
         }
 
-        private void PerformRedo()
+        private async Task PerformRedoAsync()
         {
             if (_redoStack.Count == 0) return;
             var action = _redoStack[_redoStack.Count - 1];
             _redoStack.RemoveAt(_redoStack.Count - 1);
-            action.Redo();
+            await action.RedoAsync();
             _undoStack.Add(action);
             UpdateUndoRedoButtons();
-            MarkDirty();
+            ApplyDirtyStateForAction(action);
         }
 
         private void UpdateUndoRedoButtons()
@@ -1330,8 +1451,28 @@ namespace Caelum.Pages
             RedoButton.IsEnabled = _redoStack.Count > 0;
         }
 
-        private void UndoButton_Click(object sender, RoutedEventArgs e) => PerformUndo();
-        private void RedoButton_Click(object sender, RoutedEventArgs e) => PerformRedo();
+        private void ApplyDirtyStateForAction(IUndoAction action)
+        {
+            _isDirty = action.LeavesDocumentDirty;
+        }
+
+        private void ClearUndoRedoHistory()
+        {
+            _undoStack.Clear();
+            _redoStack.Clear();
+            UpdateUndoRedoButtons();
+        }
+
+        private void PushUndoAction(IUndoAction action)
+        {
+            _undoStack.Add(action);
+            _redoStack.Clear();
+            UpdateUndoRedoButtons();
+            ApplyDirtyStateForAction(action);
+        }
+
+        private async void UndoButton_Click(object sender, RoutedEventArgs e) => await PerformUndoAsync();
+        private async void RedoButton_Click(object sender, RoutedEventArgs e) => await PerformRedoAsync();
 
         private void CreateToolPopups()
         {
@@ -1841,8 +1982,11 @@ namespace Caelum.Pages
             return popup;
         }
 
-        private void EditorPage_PreviewKeyDown(object sender, KeyEventArgs e)
+        private async void EditorPage_PreviewKeyDown(object sender, KeyEventArgs e)
         {
+            if (await TryHandleUndoRedoShortcutAsync(e))
+                return;
+
             if (e.Key == Key.Delete || e.Key == Key.Back)
             {
                 if (_currentTool == ToolType.Select && _activeSelectionPage != null && _activeSelectionPage.HasSelection)
@@ -1935,6 +2079,20 @@ namespace Caelum.Pages
             return false;
         }
 
+        private static T FindAncestor<T>(DependencyObject descendant) where T : DependencyObject
+        {
+            var current = descendant;
+            while (current != null)
+            {
+                if (current is T match)
+                    return match;
+
+                current = VisualTreeHelper.GetParent(current) ?? LogicalTreeHelper.GetParent(current);
+            }
+
+            return null;
+        }
+
         private void CloseToolPopups(ToolType toolToKeepOpen = ToolType.None)
         {
             if (toolToKeepOpen != ToolType.Pen && _penPopup != null)
@@ -2001,6 +2159,8 @@ namespace Caelum.Pages
             _pageControls.Clear();
             _pageTopOffsets.Clear();
             _pageHeights.Clear();
+            _pageDeleteButtons.Clear();
+            _pageInsertButtons.Clear();
             DeselectTextBox();
             _isDirty = false;
             _lastRenderedDpiScale = 1.0;
@@ -2008,6 +2168,7 @@ namespace Caelum.Pages
             _pagesInitiallyRendered.Clear();
             DisposeSelectablePdfDocument();
             UpdatePdfSurfaceVisibility();
+            ClearUndoRedoHistory();
 
             try
             {
@@ -2033,8 +2194,7 @@ namespace Caelum.Pages
                     {
                         PageIndex = i,
                         Width = w,
-                        Height = h,
-                        Margin = new Thickness(0, 0, 0, PageSpacing)
+                        Height = h
                     };
 
                     pageControl.TextOverlayPointerPressed += PageControl_TextOverlayPointerPressed;
@@ -2056,16 +2216,23 @@ namespace Caelum.Pages
                     _pageTopOffsets.Add(currentTop);
                     _pageHeights.Add(h);
                     currentTop += h + PageSpacing;
-                    PagesContainer.Children.Add(pageControl);
+
+                    if (i > 0)
+                        PagesContainer.Children.Add(CreatePageInsertGap(i));
+
+                    PagesContainer.Children.Add(CreatePageHost(pageControl));
                 }
 
-                ApplyToolToAllPages();
+                if (pageCount > 0)
+                    PagesContainer.Children.Add(CreatePageInsertGap(pageCount));
 
+                ApplyToolToAllPages();
+                RefreshPageDeleteButtons();
+
+                CancelSmoothScroll();
                 PdfScrollViewer.ScrollToVerticalOffset(0);
                 PdfScrollViewer.ScrollToHorizontalOffset(0);
-                _targetVerticalOffset = 0;
-                _targetHorizontalOffset = 0;
-                _smoothScrollInitialized = true;
+                SyncSmoothScrollState();
 
                 var visiblePages = GetVisiblePageControls();
                 foreach (var page in visiblePages)
@@ -2079,6 +2246,9 @@ namespace Caelum.Pages
 
                 UpdatePageNumberIndicator();
                 SyncSelectableViewerFromCustomView();
+
+                if (_promptSaveAsAfterLoad && !_hasPromptedForSaveAs)
+                    await PromptSaveAsForDraftAsync();
             }
             catch (OperationCanceledException)
             {
@@ -2102,6 +2272,305 @@ namespace Caelum.Pages
             {
                 if (sessionId == _loadSessionId)
                     HideLoadingOverlay();
+            }
+        }
+
+        private FrameworkElement CreatePageHost(PdfPageControl pageControl)
+        {
+            var host = new Grid
+            {
+                Width = pageControl.Width,
+                Height = pageControl.Height,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                ClipToBounds = false
+            };
+
+            host.Children.Add(pageControl);
+
+            var deleteButton = new Button
+            {
+                HorizontalAlignment = HorizontalAlignment.Right,
+                VerticalAlignment = VerticalAlignment.Top,
+                Margin = new Thickness(0, 14, 14, 0),
+                MinHeight = 34,
+                Padding = new Thickness(10, 6, 10, 6),
+                Background = new SolidColorBrush(Color.FromArgb(245, 255, 255, 255)),
+                BorderBrush = new SolidColorBrush(Color.FromRgb(252, 165, 165)),
+                BorderThickness = new Thickness(1),
+                Cursor = Cursors.Hand,
+                Visibility = Visibility.Hidden,
+                ToolTip = LocalizationService.Get("Editor.DeletePageTooltip"),
+                Template = CreatePageChromeButtonTemplate("#FEE2E2", "#FECACA")
+            };
+
+            deleteButton.Content = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Children =
+                {
+                    new TextBlock
+                    {
+                        Text = "\uE74D",
+                        FontFamily = new FontFamily("Segoe MDL2 Assets"),
+                        FontSize = 11,
+                        Foreground = new SolidColorBrush(Color.FromRgb(185, 28, 28)),
+                        VerticalAlignment = VerticalAlignment.Center
+                    },
+                    new TextBlock
+                    {
+                        Text = LocalizationService.Get("Editor.DeletePageTooltip"),
+                        Margin = new Thickness(6, 0, 0, 0),
+                        FontSize = 12,
+                        FontWeight = FontWeights.SemiBold,
+                        Foreground = new SolidColorBrush(Color.FromRgb(127, 29, 29)),
+                        VerticalAlignment = VerticalAlignment.Center
+                    }
+                }
+            };
+
+            deleteButton.Click += async (sender, args) =>
+            {
+                args.Handled = true;
+                await DeletePageAtAsync(pageControl.PageIndex);
+            };
+
+            host.MouseEnter += (_, __) =>
+            {
+                if (_pageControls.Count > 1)
+                    deleteButton.Visibility = Visibility.Visible;
+            };
+            host.MouseLeave += (_, __) =>
+            {
+                if (!deleteButton.IsMouseOver)
+                    deleteButton.Visibility = Visibility.Hidden;
+            };
+            deleteButton.MouseLeave += (_, __) =>
+            {
+                if (!host.IsMouseOver)
+                    deleteButton.Visibility = Visibility.Hidden;
+            };
+
+            _pageDeleteButtons.Add(deleteButton);
+            host.Children.Add(deleteButton);
+            return host;
+        }
+
+        private FrameworkElement CreatePageInsertGap(int insertIndex)
+        {
+            var zone = new Grid
+            {
+                Height = PageSpacing,
+                Background = Brushes.Transparent,
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                ClipToBounds = false
+            };
+
+            var guideLine = new Border
+            {
+                Width = 150,
+                Height = 2,
+                CornerRadius = new CornerRadius(1),
+                Background = new SolidColorBrush(Color.FromRgb(191, 219, 254)),
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+                Visibility = Visibility.Collapsed
+            };
+
+            var insertButton = new Button
+            {
+                Width = 78,
+                Height = 32,
+                Background = new SolidColorBrush(Color.FromArgb(250, 255, 255, 255)),
+                BorderBrush = new SolidColorBrush(Color.FromRgb(147, 197, 253)),
+                BorderThickness = new Thickness(1),
+                Cursor = Cursors.Hand,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+                Visibility = Visibility.Collapsed,
+                ToolTip = LocalizationService.Get("Editor.InsertPageHereTooltip"),
+                Template = CreatePageChromeButtonTemplate("#EFF6FF", "#DBEAFE")
+            };
+
+            insertButton.Content = new TextBlock
+            {
+                Text = "\uE710",
+                FontFamily = new FontFamily("Segoe MDL2 Assets"),
+                FontSize = 16,
+                Foreground = new SolidColorBrush(Color.FromRgb(37, 99, 235)),
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+
+            insertButton.Click += async (_, __) => await InsertPageAtAsync(insertIndex);
+
+            zone.MouseEnter += (_, __) =>
+            {
+                guideLine.Visibility = Visibility.Visible;
+                insertButton.Visibility = Visibility.Visible;
+            };
+            zone.MouseLeave += (_, __) =>
+            {
+                if (!insertButton.IsMouseOver)
+                {
+                    guideLine.Visibility = Visibility.Collapsed;
+                    insertButton.Visibility = Visibility.Collapsed;
+                }
+            };
+            insertButton.MouseLeave += (_, __) =>
+            {
+                if (!zone.IsMouseOver)
+                {
+                    guideLine.Visibility = Visibility.Collapsed;
+                    insertButton.Visibility = Visibility.Collapsed;
+                }
+            };
+
+            _pageInsertButtons.Add(insertButton);
+            zone.Children.Add(guideLine);
+            zone.Children.Add(insertButton);
+            return zone;
+        }
+
+        private void RefreshPageDeleteButtons()
+        {
+            var visibility = _pageControls.Count > 1 ? Visibility.Hidden : Visibility.Collapsed;
+            foreach (var button in _pageDeleteButtons)
+            {
+                button.Visibility = visibility;
+                button.ToolTip = LocalizationService.Get("Editor.DeletePageTooltip");
+                if (button.Content is StackPanel panel && panel.Children.Count > 1 && panel.Children[1] is TextBlock label)
+                    label.Text = LocalizationService.Get("Editor.DeletePageTooltip");
+            }
+
+            foreach (var button in _pageInsertButtons)
+                button.ToolTip = LocalizationService.Get("Editor.InsertPageHereTooltip");
+        }
+
+        private async Task InsertPageAtAsync(int insertIndex)
+        {
+            if (string.IsNullOrWhiteSpace(_currentPdfPath))
+            {
+                GetMainWindow()?.ShowToast(LocalizationService.Get("Editor.NoDocumentLoaded"), "\uE783");
+                return;
+            }
+
+            var owner = GetMainWindow();
+            var picker = new PageTemplatePickerWindow();
+            if (owner != null)
+                picker.Owner = owner;
+
+            if (picker.ShowDialog() != true)
+                return;
+
+            try
+            {
+                if (_isDirty)
+                    await AutoSaveAsync();
+
+                byte[] beforeBytes = await File.ReadAllBytesAsync(_currentPdfPath);
+                int undoFocusIndex = Math.Max(0, Math.Min(insertIndex, Math.Max(_pageControls.Count - 1, 0)));
+
+                await _pdfService.InsertPageAsync(_currentPdfPath, insertIndex, picker.SelectedTemplate);
+
+                byte[] afterBytes = await File.ReadAllBytesAsync(_currentPdfPath);
+                await LoadPdf(_currentPdfPath);
+
+                int insertedPageIndex = Math.Max(0, Math.Min(insertIndex, _pageControls.Count - 1));
+                JumpToPage(insertedPageIndex);
+                RecentFilesService.UpdateMetadata(_currentPdfPath, _pageControls.Count, File.GetLastWriteTimeUtc(_currentPdfPath));
+                PushUndoAction(new DocumentSnapshotAction(this, beforeBytes, afterBytes, undoFocusIndex, insertedPageIndex));
+                GetMainWindow()?.ShowToast(LocalizationService.Get("Editor.PageAdded"), "\uE710");
+            }
+            catch (Exception ex)
+            {
+                var mw = GetMainWindow();
+                if (mw != null)
+                    await DialogService.ShowErrorAsync(mw, LocalizationService.Get("Common.Error"), LocalizationService.Format("Editor.AddPageFailed", ex.Message));
+                else
+                    MessageBox.Show(LocalizationService.Format("Editor.AddPageFailed", ex.Message), LocalizationService.Get("Common.Error"), MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+        private async Task DeletePageAtAsync(int pageIndex)
+        {
+            if (string.IsNullOrWhiteSpace(_currentPdfPath))
+            {
+                GetMainWindow()?.ShowToast(LocalizationService.Get("Editor.NoDocumentLoaded"), "\uE783");
+                return;
+            }
+
+            if (_pageControls.Count <= 1)
+            {
+                GetMainWindow()?.ShowToast(LocalizationService.Get("Editor.PageDeleteBlocked"), "\uE783");
+                return;
+            }
+
+            try
+            {
+                if (_isDirty)
+                    await AutoSaveAsync();
+
+                byte[] beforeBytes = await File.ReadAllBytesAsync(_currentPdfPath);
+                await _pdfService.DeletePageAsync(_currentPdfPath, pageIndex);
+
+                byte[] afterBytes = await File.ReadAllBytesAsync(_currentPdfPath);
+                await LoadPdf(_currentPdfPath);
+
+                int focusAfterDelete = Math.Max(0, Math.Min(pageIndex, _pageControls.Count - 1));
+                JumpToPage(focusAfterDelete);
+                RecentFilesService.UpdateMetadata(_currentPdfPath, _pageControls.Count, File.GetLastWriteTimeUtc(_currentPdfPath));
+                PushUndoAction(new DocumentSnapshotAction(this, beforeBytes, afterBytes, pageIndex, focusAfterDelete));
+                GetMainWindow()?.ShowToast(LocalizationService.Get("Editor.PageDeleted"), "\uE74D");
+            }
+            catch (InvalidOperationException)
+            {
+                GetMainWindow()?.ShowToast(LocalizationService.Get("Editor.PageDeleteBlocked"), "\uE783");
+            }
+            catch (Exception ex)
+            {
+                var mw = GetMainWindow();
+                if (mw != null)
+                    await DialogService.ShowErrorAsync(mw, LocalizationService.Get("Common.Error"), LocalizationService.Format("Editor.DeletePageFailed", ex.Message));
+                else
+                    MessageBox.Show(LocalizationService.Format("Editor.DeletePageFailed", ex.Message), LocalizationService.Get("Common.Error"), MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+        private async Task ApplyDocumentSnapshotAsync(byte[] snapshotBytes, int focusPageIndex)
+        {
+            if (string.IsNullOrWhiteSpace(_currentPdfPath))
+                return;
+
+            await WriteDocumentBytesAsync(_currentPdfPath, snapshotBytes);
+            await LoadPdf(_currentPdfPath);
+
+            if (_pageControls.Count > 0)
+                JumpToPage(Math.Max(0, Math.Min(focusPageIndex, _pageControls.Count - 1)));
+
+            RecentFilesService.UpdateMetadata(_currentPdfPath, _pageControls.Count, File.GetLastWriteTimeUtc(_currentPdfPath));
+        }
+
+        private static async Task WriteDocumentBytesAsync(string filePath, byte[] snapshotBytes)
+        {
+            string tempPath = System.IO.Path.Combine(
+                System.IO.Path.GetDirectoryName(filePath) ?? string.Empty,
+                $"{System.IO.Path.GetFileName(filePath)}.{Guid.NewGuid():N}.snapshot");
+
+            try
+            {
+                await File.WriteAllBytesAsync(tempPath, snapshotBytes);
+                File.Copy(tempPath, filePath, true);
+            }
+            finally
+            {
+                try
+                {
+                    if (File.Exists(tempPath))
+                        File.Delete(tempPath);
+                }
+                catch
+                {
+                }
             }
         }
 
@@ -2169,20 +2638,14 @@ namespace Caelum.Pages
         {
             if (sender is not PdfPageControl page) return;
             var action = new SelectionMoveAction(page, e.DeltaX, e.DeltaY, e.SelectedStrokes, e.SelectedTextContainers);
-            _undoStack.Add(action);
-            _redoStack.Clear();
-            UpdateUndoRedoButtons();
-            MarkDirty();
+            PushUndoAction(action);
         }
 
         private void PageControl_SelectionResizeCompleted(object sender, SelectionResizeCompletedEventArgs e)
         {
             if (sender is not PdfPageControl page) return;
             var action = new SelectionResizeAction(page, e.TotalScale, e.Anchor, e.SelectedStrokes, e.SelectedTextContainers);
-            _undoStack.Add(action);
-            _redoStack.Clear();
-            UpdateUndoRedoButtons();
-            MarkDirty();
+            PushUndoAction(action);
         }
 
         private void PenToolButton_Click(object sender, RoutedEventArgs e)
@@ -2358,6 +2821,72 @@ namespace Caelum.Pages
             await SaveAnnotationsToPdfAsync();
         }
 
+        private async Task PromptSaveAsForDraftAsync()
+        {
+            if (_hasPromptedForSaveAs || string.IsNullOrWhiteSpace(_currentPdfPath))
+                return;
+
+            _hasPromptedForSaveAs = true;
+            _promptSaveAsAfterLoad = false;
+
+            var initialName = System.IO.Path.GetFileName(_currentPdfPath);
+            var dialog = new SaveFileDialog
+            {
+                Filter = LocalizationService.Get("Home.PdfFilter"),
+                Title = LocalizationService.Get("Home.SaveNotebookTitle"),
+                FileName = initialName,
+                AddExtension = true,
+                DefaultExt = ".pdf",
+                OverwritePrompt = true
+            };
+
+            if (dialog.ShowDialog() != true)
+                return;
+
+            var oldPath = _currentPdfPath;
+            var newPath = dialog.FileName;
+
+            try
+            {
+                if (_isDirty)
+                    await AutoSaveAsync();
+
+                if (!string.Equals(oldPath, newPath, StringComparison.OrdinalIgnoreCase))
+                {
+                    Directory.CreateDirectory(System.IO.Path.GetDirectoryName(newPath) ?? string.Empty);
+                    File.Copy(oldPath, newPath, true);
+                }
+
+                RecentFilesService.UpdatePath(oldPath, newPath);
+                RecentFilesService.AddOrPromote(newPath, _pageControls.Count, File.GetLastWriteTimeUtc(newPath), _pendingLibraryFolderId, true);
+                UpdateCurrentPdfPath(newPath);
+                _isNotebookDraft = false;
+                GetMainWindow()?.HandleFilePathChanged(oldPath, newPath);
+                GetMainWindow()?.ShowToast(LocalizationService.Get("Home.NotebookSaved"), "\uE74E");
+
+                if (!string.Equals(oldPath, newPath, StringComparison.OrdinalIgnoreCase) &&
+                    oldPath.IndexOf(System.IO.Path.Combine("Caelum", "Drafts"), StringComparison.OrdinalIgnoreCase) >= 0 &&
+                    File.Exists(oldPath))
+                {
+                    try
+                    {
+                        File.Delete(oldPath);
+                    }
+                    catch
+                    {
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                var mw = GetMainWindow();
+                if (mw != null)
+                    await DialogService.ShowErrorAsync(mw, LocalizationService.Get("Common.Error"), LocalizationService.Format("Home.CreateNotebookFailed", ex.Message));
+                else
+                    MessageBox.Show(LocalizationService.Format("Home.CreateNotebookFailed", ex.Message), LocalizationService.Get("Common.Error"), MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
         private void ZoomInButton_Click(object sender, RoutedEventArgs e)
         {
             var center = new Point(PdfScrollViewer.ViewportWidth / 2, PdfScrollViewer.ViewportHeight / 2);
@@ -2418,9 +2947,12 @@ namespace Caelum.Pages
             ZoomLabel.Visibility = Visibility.Visible;
         }
 
-        private void PageNumberLabel_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        private void PageJumpBorder_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
         {
             if (_pageControls.Count == 0)
+                return;
+
+            if (PageNumberTextBox.Visibility == Visibility.Visible)
                 return;
 
             PageNumberLabel.Visibility = Visibility.Collapsed;
@@ -2447,7 +2979,8 @@ namespace Caelum.Pages
 
         private void PageNumberTextBox_LostFocus(object sender, RoutedEventArgs e)
         {
-            ApplyPageJumpFromTextBox();
+            if (PageNumberTextBox.Visibility == Visibility.Visible)
+                ApplyPageJumpFromTextBox();
         }
 
         private void ApplyPageJumpFromTextBox()
@@ -2478,9 +3011,11 @@ namespace Caelum.Pages
             if (pageIndex < 0 || pageIndex >= _pageControls.Count)
                 return;
 
+            CancelSmoothScroll();
             double targetOffset = Math.Max(0, GetScaledPageTop(pageIndex) - 12);
             PdfScrollViewer.ScrollToVerticalOffset(targetOffset);
-            _targetVerticalOffset = PdfScrollViewer.VerticalOffset;
+            PdfScrollViewer.UpdateLayout();
+            SyncSmoothScrollState();
             UpdatePageNumberIndicator();
             UpdateSelectedTextBoxPopupVisibility(forceRefresh: true);
         }
@@ -2502,14 +3037,7 @@ namespace Caelum.Pages
                 BorderBrush = new SolidColorBrush(Color.FromArgb(28, 15, 23, 42)),
                 BorderThickness = new Thickness(1),
                 CornerRadius = new CornerRadius(16),
-                Child = panel,
-                Effect = new System.Windows.Media.Effects.DropShadowEffect
-                {
-                    BlurRadius = 24,
-                    ShadowDepth = 0,
-                    Opacity = 0.18,
-                    Color = Colors.Black
-                }
+                Child = panel
             };
 
             var deleteButton = new Button
@@ -2984,10 +3512,10 @@ namespace Caelum.Pages
             var textPadding = new Thickness(10, 8, 10, 8);
             var container = new Grid { Background = Brushes.Transparent };
 
-            container.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-            container.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            container.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            container.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
-            // Visual chrome border spanning both rows
+            // Visual chrome border spanning both columns
             var chrome = new Border
             {
                 CornerRadius = new CornerRadius(8),
@@ -2997,7 +3525,7 @@ namespace Caelum.Pages
                 IsHitTestVisible = false,
                 Tag = "chrome"
             };
-            Grid.SetRowSpan(chrome, 2);
+            Grid.SetColumnSpan(chrome, 2);
 
             var textBox = new TextBox
             {
@@ -3017,20 +3545,22 @@ namespace Caelum.Pages
 
             var dragHandle = new Border
             {
-                Width = 44,
-                Height = 22,
-                Margin = new Thickness(0, 4, 0, 4),
-                HorizontalAlignment = HorizontalAlignment.Center,
+                Width = 18,
+                Height = 36,
+                Margin = new Thickness(8, 4, 0, 4),
+                HorizontalAlignment = HorizontalAlignment.Right,
                 VerticalAlignment = VerticalAlignment.Center,
-                CornerRadius = new CornerRadius(8),
+                CornerRadius = new CornerRadius(9),
                 Visibility = select ? Visibility.Visible : Visibility.Collapsed,
                 Cursor = Cursors.SizeAll,
-                Background = new SolidColorBrush(Color.FromRgb(37, 99, 235)),
+                Background = new SolidColorBrush(Color.FromRgb(248, 250, 252)),
+                BorderBrush = new SolidColorBrush(Color.FromRgb(203, 213, 225)),
+                BorderThickness = new Thickness(1),
                 Effect = new System.Windows.Media.Effects.DropShadowEffect
                 {
-                    BlurRadius = 10,
-                    ShadowDepth = 0,
-                    Opacity = 0.16,
+                    BlurRadius = 8,
+                    ShadowDepth = 1,
+                    Opacity = 0.10,
                     Color = Colors.Black
                 }
             };
@@ -3041,20 +3571,31 @@ namespace Caelum.Pages
                 HorizontalAlignment = HorizontalAlignment.Center,
                 VerticalAlignment = VerticalAlignment.Center
             };
-            for (int i = 0; i < 4; i++)
+            for (int column = 0; column < 2; column++)
             {
-                dragIcon.Children.Add(new Ellipse
+                var dotColumn = new StackPanel
                 {
-                    Width = 4,
-                    Height = 4,
-                    Fill = Brushes.White,
-                    Margin = new Thickness(1.5, 0, 1.5, 0)
-                });
+                    Orientation = Orientation.Vertical,
+                    Margin = new Thickness(column == 0 ? 0 : 2, 0, 0, 0)
+                };
+
+                for (int row = 0; row < 3; row++)
+                {
+                    dotColumn.Children.Add(new Ellipse
+                    {
+                        Width = 3,
+                        Height = 3,
+                        Fill = new SolidColorBrush(Color.FromRgb(100, 116, 139)),
+                        Margin = new Thickness(0, 1.5, 0, 1.5)
+                    });
+                }
+
+                dragIcon.Children.Add(dotColumn);
             }
             dragHandle.Child = dragIcon;
 
-            Grid.SetRow(textBox, 0);
-            Grid.SetRow(dragHandle, 1);
+            Grid.SetColumn(textBox, 0);
+            Grid.SetColumn(dragHandle, 1);
 
             container.Children.Add(chrome);
             container.Children.Add(textBox);
@@ -3079,15 +3620,9 @@ namespace Caelum.Pages
             textBox.TextChanged += (s, e) => MarkDirty();
             textBox.PreviewMouseLeftButtonDown += (s, e) =>
             {
-                // Only intercept clicks that land directly on the textbox itself.
-                // If the original source is not inside the textbox's own visual tree exclude
-                // toolbar and popup hits so Undo/Redo buttons remain clickable.
-                if (e.OriginalSource is DependencyObject src && IsDescendantOf(src, ToolbarBorder))
-                    return; // Let toolbar buttons handle their own clicks
-
-                // Allow clicking the textbox to select/edit it, regardless of active tool
-                SelectTextBox((TextBox)s);
-                e.Handled = true; // Prevent click from bubbling to Canvas
+                // Let the native TextBox click logic place the caret.
+                // We only switch selection/read-only state before WPF handles the click.
+                SelectTextBox((TextBox)s, focusTextBox: false);
             };
             textBox.GotFocus += (s, e) =>
             {
@@ -3330,11 +3865,7 @@ namespace Caelum.Pages
         private void PageControl_StrokeCollectedUndoable(object sender, System.Windows.Ink.Stroke stroke)
         {
             if (sender is PdfPageControl page)
-            {
-                _undoStack.Add(new StrokeAddedAction(page, stroke));
-                _redoStack.Clear();
-                UpdateUndoRedoButtons();
-            }
+                PushUndoAction(new StrokeAddedAction(page, stroke));
         }
 
         private void MarkDirty() => _isDirty = true;
@@ -3471,6 +4002,37 @@ namespace Caelum.Pages
             template.Triggers.Add(hoverTrigger);
 
             var pressTrigger = new Trigger { Property = System.Windows.Controls.Primitives.ButtonBase.IsPressedProperty, Value = true };
+            pressTrigger.Setters.Add(new Setter(Border.BackgroundProperty,
+                new SolidColorBrush((Color)ColorConverter.ConvertFromString(pressedColor)), "Root"));
+            template.Triggers.Add(pressTrigger);
+
+            return template;
+        }
+
+        private static ControlTemplate CreatePageChromeButtonTemplate(string hoverColor, string pressedColor)
+        {
+            var template = new ControlTemplate(typeof(Button));
+            var borderFactory = new FrameworkElementFactory(typeof(Border));
+            borderFactory.Name = "Root";
+            borderFactory.SetValue(Border.BackgroundProperty, new TemplateBindingExtension(Button.BackgroundProperty));
+            borderFactory.SetValue(Border.BorderBrushProperty, new TemplateBindingExtension(Button.BorderBrushProperty));
+            borderFactory.SetValue(Border.BorderThicknessProperty, new TemplateBindingExtension(Button.BorderThicknessProperty));
+            borderFactory.SetValue(Border.CornerRadiusProperty, new CornerRadius(12));
+            borderFactory.SetValue(Border.PaddingProperty, new TemplateBindingExtension(Button.PaddingProperty));
+
+            var contentFactory = new FrameworkElementFactory(typeof(ContentPresenter));
+            contentFactory.SetValue(ContentPresenter.HorizontalAlignmentProperty, HorizontalAlignment.Center);
+            contentFactory.SetValue(ContentPresenter.VerticalAlignmentProperty, VerticalAlignment.Center);
+            borderFactory.AppendChild(contentFactory);
+
+            template.VisualTree = borderFactory;
+
+            var hoverTrigger = new Trigger { Property = UIElement.IsMouseOverProperty, Value = true };
+            hoverTrigger.Setters.Add(new Setter(Border.BackgroundProperty,
+                new SolidColorBrush((Color)ColorConverter.ConvertFromString(hoverColor)), "Root"));
+            template.Triggers.Add(hoverTrigger);
+
+            var pressTrigger = new Trigger { Property = ButtonBase.IsPressedProperty, Value = true };
             pressTrigger.Setters.Add(new Setter(Border.BackgroundProperty,
                 new SolidColorBrush((Color)ColorConverter.ConvertFromString(pressedColor)), "Root"));
             template.Triggers.Add(pressTrigger);

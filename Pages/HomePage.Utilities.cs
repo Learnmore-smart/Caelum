@@ -15,7 +15,7 @@ namespace Caelum.Pages
     {
         public event PropertyChangedEventHandler PropertyChanged;
 
-        public int SelectedTileCount => HomeTiles.Count(tile => !tile.IsAddTile && tile.IsSelected);
+        public int SelectedTileCount => HomeTiles.Count(tile => tile.IsFile && tile.IsSelected);
 
         public bool HasSelectedTiles => SelectedTileCount > 0;
 
@@ -52,6 +52,7 @@ namespace Caelum.Pages
             OnPropertyChanged(nameof(SelectionDoneText));
             OnPropertyChanged(nameof(SelectionRemoveText));
             OnPropertyChanged(nameof(SelectionSelectAllText));
+            GetMainWindow()?.RefreshSelectButtonVisualState();
         }
 
         private IEnumerable<HomeTile> GetVisibleFileTiles()
@@ -59,7 +60,7 @@ namespace Caelum.Pages
             var view = System.Windows.Data.CollectionViewSource.GetDefaultView(HomeTiles);
             return view.Cast<object>()
                 .OfType<HomeTile>()
-                .Where(tile => !tile.IsAddTile);
+                .Where(tile => tile.IsFile);
         }
 
         private void SetSelectionMode(bool isEnabled)
@@ -76,7 +77,7 @@ namespace Caelum.Pages
 
         private void ToggleTileSelection(HomeTile tile)
         {
-            if (tile == null || tile.IsAddTile)
+            if (tile == null || !tile.IsFile)
                 return;
 
             tile.IsSelected = !tile.IsSelected;
@@ -87,7 +88,7 @@ namespace Caelum.Pages
         {
             foreach (var tile in HomeTiles)
             {
-                if (!tile.IsAddTile && tile.IsSelected)
+                if (tile.IsFile && tile.IsSelected)
                     tile.IsSelected = false;
             }
 
@@ -97,15 +98,16 @@ namespace Caelum.Pages
 
         public void ApplyLocalization()
         {
-            if (HomeTitleTextBlock != null)
-                HomeTitleTextBlock.Text = LocalizationService.Get("Home.Title");
-            if (HomeSubtitleTextBlock != null)
-                HomeSubtitleTextBlock.Text = LocalizationService.Get("Home.Subtitle");
-
             foreach (var tile in HomeTiles)
                 tile.RefreshDisplay();
 
+            UpdateHeaderText();
             RefreshSelectionState();
+        }
+
+        public void ToggleSelectionMode()
+        {
+            SetSelectionMode(!IsSelectionMode);
         }
 
         private void SelectAllVisibleTiles()
@@ -121,7 +123,7 @@ namespace Caelum.Pages
         private async Task RemoveSelectedTilesAsync()
         {
             var selectedTiles = HomeTiles
-                .Where(tile => !tile.IsAddTile && tile.IsSelected)
+                .Where(tile => tile.IsFile && tile.IsSelected)
                 .ToList();
 
             if (selectedTiles.Count == 0)
@@ -129,11 +131,11 @@ namespace Caelum.Pages
 
             foreach (var tile in selectedTiles)
             {
-                HomeTiles.Remove(tile);
                 if (!string.IsNullOrWhiteSpace(tile.Path))
                     RecentFilesService.Remove(tile.Path);
             }
 
+            await RefreshCurrentFolderAsync();
             RefreshSelectionState();
 
             if (Window.GetWindow(this) is MainWindow mw)

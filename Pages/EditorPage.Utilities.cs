@@ -45,9 +45,12 @@ namespace Caelum.Pages
                 ZoomInButton.ToolTip = LocalizationService.Get("Editor.ZoomInTooltip");
             if (ZoomLabel != null)
                 ZoomLabel.ToolTip = LocalizationService.Get("Editor.ZoomEditTooltip");
+            if (PageJumpBorder != null)
+                PageJumpBorder.ToolTip = LocalizationService.Get("Editor.PageJumpTooltip");
 
             CloseToolPopups();
             CreateToolPopups();
+            RefreshPageDeleteButtons();
         }
 
         private string GetLocalizedToolName(ToolType tool)

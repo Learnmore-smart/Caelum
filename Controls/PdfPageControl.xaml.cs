@@ -394,6 +394,13 @@ namespace Caelum.Controls
         {
             if (_currentMode == CustomInkInputProcessingMode.None)
             {
+                if (e.OriginalSource is DependencyObject source &&
+                    IsDescendantOf(source, TextOverlayCanvas) &&
+                    source != TextOverlayCanvas)
+                {
+                    return;
+                }
+
                 BackgroundPointerPressed?.Invoke(this, e);
             }
         }
@@ -1155,15 +1162,16 @@ namespace Caelum.Controls
                 return;
 
             SelectionOverlayCanvas.Children.Clear();
+            var accentBrush = new SolidColorBrush(Color.FromRgb(37, 99, 235));
 
             var selectionBorder = new System.Windows.Shapes.Rectangle
             {
                 Width = bounds.Width + 8,
                 Height = bounds.Height + 8,
-                Stroke = new SolidColorBrush(Color.FromRgb(0, 120, 212)),
+                Stroke = accentBrush,
                 StrokeThickness = 1.5,
-                StrokeDashArray = new DoubleCollection { 4, 2 },
-                Fill = new SolidColorBrush(Color.FromArgb(20, 0, 120, 212)),
+                StrokeDashArray = new DoubleCollection { 3, 2 },
+                Fill = new SolidColorBrush(Color.FromArgb(18, 37, 99, 235)),
                 Cursor = Cursors.SizeAll
             };
             Canvas.SetLeft(selectionBorder, bounds.Left - 4);
@@ -1187,21 +1195,42 @@ namespace Caelum.Controls
             for (int i = 0; i < handles.Length; i++)
             {
                 var handlePos = handles[i];
-                var handle = new System.Windows.Shapes.Rectangle
+                var handle = new System.Windows.Shapes.Ellipse
                 {
-                    Width = 10,
-                    Height = 10,
+                    Width = 12,
+                    Height = 12,
                     Fill = Brushes.White,
-                    Stroke = new SolidColorBrush(Color.FromRgb(0, 120, 212)),
+                    Stroke = accentBrush,
                     StrokeThickness = 1.5,
-                    Cursor = handleCursors[i]
+                    Cursor = handleCursors[i],
+                    Effect = new System.Windows.Media.Effects.DropShadowEffect
+                    {
+                        BlurRadius = 6,
+                        ShadowDepth = 0,
+                        Opacity = 0.12,
+                        Color = Colors.Black
+                    }
                 };
-                Canvas.SetLeft(handle, handlePos.X - 5);
-                Canvas.SetTop(handle, handlePos.Y - 5);
+                Canvas.SetLeft(handle, handlePos.X - 6);
+                Canvas.SetTop(handle, handlePos.Y - 6);
                 SelectionOverlayCanvas.Children.Add(handle);
             }
 
             SelectionChanged?.Invoke(this, new AnnotationSelectionChangedEventArgs(true, bounds));
+        }
+
+        private static bool IsDescendantOf(DependencyObject descendant, DependencyObject ancestor)
+        {
+            var current = descendant;
+            while (current != null)
+            {
+                if (ReferenceEquals(current, ancestor))
+                    return true;
+
+                current = VisualTreeHelper.GetParent(current) ?? LogicalTreeHelper.GetParent(current);
+            }
+
+            return false;
         }
 
         private static Point GetOppositeCorner(Rect bounds, int handleIndex)

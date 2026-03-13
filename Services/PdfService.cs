@@ -11,6 +11,7 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using Caelum.Models;
 using PdfSharpCore.Drawing;
 using PdfSharpCore.Pdf;
 using PdfSharpCore.Pdf.IO;
@@ -65,6 +66,58 @@ namespace Caelum.Services
 
         public int PageCount => _pdfDocument?.PageCount ?? 0;
         public Dictionary<int, Models.PageAnnotation> ExtractedAnnotations { get; private set; } = new();
+
+        public static async Task CreateBlankPdfAsync(
+            string filePath,
+            double widthPoints = 612,
+            double heightPoints = 792,
+            PageInsertTemplate template = PageInsertTemplate.Blank)
+        {
+            await Task.Run(() =>
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(filePath) ?? string.Empty);
+
+                using var document = new PdfSharpCore.Pdf.PdfDocument();
+                var page = document.AddPage();
+                page.Width = widthPoints;
+                page.Height = heightPoints;
+                ApplyPageTemplate(page, template);
+                document.Save(filePath);
+            }).ConfigureAwait(false);
+        }
+
+        public async Task AppendBlankPageAsync(string filePath, double? widthPoints = null, double? heightPoints = null)
+        {
+            await InsertPageAsync(filePath, int.MaxValue, PageInsertTemplate.Blank, widthPoints, heightPoints).ConfigureAwait(false);
+        }
+
+        public async Task InsertPageAsync(string filePath, int insertIndex, PageInsertTemplate template, double? widthPoints = null, double? heightPoints = null)
+        {
+            await _documentLock.WaitAsync().ConfigureAwait(false);
+            try
+            {
+                await Task.Run(() => InsertPageCore(filePath, insertIndex, template, widthPoints, heightPoints), CancellationToken.None).ConfigureAwait(false);
+                await ReloadDocumentFromFileAsync(filePath).ConfigureAwait(false);
+            }
+            finally
+            {
+                _documentLock.Release();
+            }
+        }
+
+        public async Task DeletePageAsync(string filePath, int pageIndex)
+        {
+            await _documentLock.WaitAsync().ConfigureAwait(false);
+            try
+            {
+                await Task.Run(() => DeletePageCore(filePath, pageIndex), CancellationToken.None).ConfigureAwait(false);
+                await ReloadDocumentFromFileAsync(filePath).ConfigureAwait(false);
+            }
+            finally
+            {
+                _documentLock.Release();
+            }
+        }
 
         /// <summary>
         /// Returns the page size in device-independent pixels (at 192 DPI rendering).
@@ -254,6 +307,168 @@ namespace Caelum.Services
             _pdfDocument = null;
             _pdfBackingStream?.Dispose();
             _pdfBackingStream = null;
+        }
+
+        private async Task ReloadDocumentFromFileAsync(string filePath)
+        {
+            DisposeCurrentDocument();
+            _sourceFilePath = filePath;
+
+            var loaded = await Task.Run(() => LoadPdfDocument(filePath, CancellationToken.None), CancellationToken.None).ConfigureAwait(false);
+            _pdfDocument = loaded.Document;
+            _pdfBackingStream = loaded.BackingStream;
+            ExtractedAnnotations = loaded.ExtractedAnnotations;
+        }
+
+        private static void InsertPageCore(string filePath, int insertIndex, PageInsertTemplate template, double? widthPoints, double? heightPoints)
+        {
+            if (!File.Exists(filePath))
+                throw new FileNotFoundException("PDF to update not found.", filePath);
+
+            string tempPath = Path.Combine(
+                Path.GetDirectoryName(filePath) ?? string.Empty,
+                $"{Path.GetFileName(filePath)}.{Guid.NewGuid():N}.tmp");
+
+            try
+            {
+                using (var sourceStream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                using (var document = PdfReader.Open(sourceStream, PdfDocumentOpenMode.Modify))
+                {
+                    int safeInsertIndex = Math.Max(0, Math.Min(insertIndex, document.PageCount));
+                    var referencePage = document.PageCount == 0
+                        ? null
+                        : document.Pages[Math.Min(safeInsertIndex, document.PageCount - 1)];
+
+                    var page = document.InsertPage(safeInsertIndex);
+                    page.Width = widthPoints ?? referencePage?.Width.Point ?? 612;
+                    page.Height = heightPoints ?? referencePage?.Height.Point ?? 792;
+
+                    ApplyPageTemplate(page, template);
+                    SaveModifiedDocument(document, tempPath);
+                }
+
+                File.Copy(tempPath, filePath, true);
+            }
+            finally
+            {
+                try
+                {
+                    if (File.Exists(tempPath))
+                        File.Delete(tempPath);
+                }
+                catch
+                {
+                }
+            }
+        }
+
+        private static void DeletePageCore(string filePath, int pageIndex)
+        {
+            if (!File.Exists(filePath))
+                throw new FileNotFoundException("PDF to update not found.", filePath);
+
+            string tempPath = Path.Combine(
+                Path.GetDirectoryName(filePath) ?? string.Empty,
+                $"{Path.GetFileName(filePath)}.{Guid.NewGuid():N}.tmp");
+
+            try
+            {
+                using (var sourceStream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                using (var document = PdfReader.Open(sourceStream, PdfDocumentOpenMode.Modify))
+                {
+                    if (document.PageCount <= 1)
+                        throw new InvalidOperationException("At least one page must remain in the document.");
+
+                    if (pageIndex < 0 || pageIndex >= document.PageCount)
+                        throw new ArgumentOutOfRangeException(nameof(pageIndex));
+
+                    document.Pages.RemoveAt(pageIndex);
+                    SaveModifiedDocument(document, tempPath);
+                }
+
+                File.Copy(tempPath, filePath, true);
+            }
+            finally
+            {
+                try
+                {
+                    if (File.Exists(tempPath))
+                        File.Delete(tempPath);
+                }
+                catch
+                {
+                }
+            }
+        }
+
+        private static void SaveModifiedDocument(PdfSharpCore.Pdf.PdfDocument document, string tempPath)
+        {
+            using var outputStream = new FileStream(tempPath, FileMode.Create, FileAccess.Write, FileShare.None);
+            document.Save(outputStream, false);
+        }
+
+        private static void ApplyPageTemplate(PdfSharpCore.Pdf.PdfPage page, PageInsertTemplate template)
+        {
+            using var gfx = XGraphics.FromPdfPage(page);
+            double width = page.Width.Point;
+            double height = page.Height.Point;
+
+            gfx.DrawRectangle(new XSolidBrush(GetTemplateBackground(template)), 0, 0, width, height);
+
+            switch (template)
+            {
+                case PageInsertTemplate.Notebook:
+                    DrawNotebookTemplate(gfx, width, height);
+                    break;
+                case PageInsertTemplate.Lined:
+                    DrawLinedTemplate(gfx, width, height);
+                    break;
+                case PageInsertTemplate.Quadrille:
+                    DrawQuadrilleTemplate(gfx, width, height);
+                    break;
+            }
+        }
+
+        private static XColor GetTemplateBackground(PageInsertTemplate template)
+        {
+            return template == PageInsertTemplate.Notebook
+                ? XColor.FromArgb(255, 253, 249, 238)
+                : XColors.White;
+        }
+
+        private static void DrawNotebookTemplate(XGraphics gfx, double width, double height)
+        {
+            DrawLinedTemplate(gfx, width, height, topMargin: 46, leftMargin: 54, rightMargin: 36, lineSpacing: 24, lineColor: XColor.FromArgb(255, 200, 221, 252));
+
+            var marginPen = new XPen(XColor.FromArgb(255, 239, 68, 68), 1.3);
+            double marginX = 78;
+            gfx.DrawLine(marginPen, marginX, 28, marginX, height - 28);
+        }
+
+        private static void DrawLinedTemplate(XGraphics gfx, double width, double height, double topMargin = 40, double leftMargin = 30, double rightMargin = 30, double lineSpacing = 24, XColor? lineColor = null)
+        {
+            var pen = new XPen(lineColor ?? XColor.FromArgb(255, 203, 213, 225), 0.9);
+            for (double y = topMargin; y < height - 24; y += lineSpacing)
+                gfx.DrawLine(pen, leftMargin, y, width - rightMargin, y);
+        }
+
+        private static void DrawQuadrilleTemplate(XGraphics gfx, double width, double height)
+        {
+            var majorPen = new XPen(XColor.FromArgb(255, 191, 219, 254), 0.95);
+            var minorPen = new XPen(XColor.FromArgb(255, 219, 234, 254), 0.65);
+            const double spacing = 18;
+
+            for (double x = 24; x < width - 24; x += spacing)
+            {
+                bool isMajor = Math.Abs(((x - 24) / spacing) % 4) < 0.001;
+                gfx.DrawLine(isMajor ? majorPen : minorPen, x, 24, x, height - 24);
+            }
+
+            for (double y = 24; y < height - 24; y += spacing)
+            {
+                bool isMajor = Math.Abs(((y - 24) / spacing) % 4) < 0.001;
+                gfx.DrawLine(isMajor ? majorPen : minorPen, 24, y, width - 24, y);
+            }
         }
 
         private Dictionary<int, Models.PageAnnotation> ExtractAndStripAnnotations(Stream sourceStream, Stream outputStream, CancellationToken cancellationToken)

@@ -10,7 +10,6 @@ using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
-using System.Windows.Media.Effects;
 using System.Windows.Media.Imaging;
 using System.Windows.Navigation;
 using Caelum.Models;
@@ -21,6 +20,9 @@ namespace Caelum
 {
     public partial class MainWindow : Window
     {
+        private const int WM_GETMINMAXINFO = 0x0024;
+        private const uint MONITOR_DEFAULTTONEAREST = 0x00000002;
+
         private readonly List<AppTab> _tabs = new List<AppTab>();
         private AppTab _activeTab;
 
@@ -68,20 +70,35 @@ namespace Caelum
                 SupportedDropExtensions.Contains(Path.GetExtension(f).ToLowerInvariant()));
         }
 
+        private bool ShouldDeferWindowFileDrop(DragEventArgs e)
+        {
+            return ActiveFrame?.Content is HomePage home &&
+                   home.ShouldDeferWindowFileDrop(e.OriginalSource as DependencyObject, e.Data);
+        }
+
         private void Window_DragEnter(object sender, DragEventArgs e)
         {
+            if (ShouldDeferWindowFileDrop(e))
+                return;
+
             e.Effects = HasSupportedFiles(e) ? DragDropEffects.Copy : DragDropEffects.None;
             e.Handled = true;
         }
 
         private void Window_DragOver(object sender, DragEventArgs e)
         {
+            if (ShouldDeferWindowFileDrop(e))
+                return;
+
             e.Effects = HasSupportedFiles(e) ? DragDropEffects.Copy : DragDropEffects.None;
             e.Handled = true;
         }
 
         private void Window_Drop(object sender, DragEventArgs e)
         {
+            if (ShouldDeferWindowFileDrop(e))
+                return;
+
             if (!e.Data.GetDataPresent(DataFormats.FileDrop)) return;
             var files = (string[])e.Data.GetData(DataFormats.FileDrop);
             if (files == null) return;
@@ -137,7 +154,7 @@ namespace Caelum
                 ActivateTab(tab);
         }
 
-        public void OpenFileInNewTab(string filePath)
+        public void OpenFileInNewTab(string filePath, bool promptSaveAsAfterLoad = false, string pendingLibraryFolderId = null, bool isNotebookDraft = false)
         {
             RecentFilesService.AddOrPromote(filePath);
 
@@ -168,7 +185,7 @@ namespace Caelum
             _tabs.Add(tab);
             RebuildTabBar();
 
-            frame.Navigate(new EditorPage(filePath));
+            frame.Navigate(new EditorPage(filePath, promptSaveAsAfterLoad, pendingLibraryFolderId, isNotebookDraft));
             ActivateTab(tab);
         }
 
@@ -189,6 +206,7 @@ namespace Caelum
 
             UpdateNavButtons();
             RebuildTabBar();
+            RefreshSelectButtonVisualState();
         }
 
         private async void CloseTab(AppTab tab)
@@ -326,7 +344,7 @@ namespace Caelum
                 MinWidth = 72,
                 Cursor = Cursors.Hand,
                 SnapsToDevicePixels = true
-            }
+            };
 
             border.MouseEnter += (s, e) =>
             {
@@ -371,6 +389,7 @@ namespace Caelum
             {
                 UpdateNavButtons();
                 UpdateActiveTabInfo();
+                RefreshSelectButtonVisualState();
             }
         }
 
@@ -436,8 +455,13 @@ namespace Caelum
             RebuildTabBar();
         }
 
+        public void RefreshActiveTabInfo()
+        {
+            UpdateActiveTabInfo();
+        }
+
         // Called by HomePage/EditorPage to navigate the current tab to a file
-        public void NavigateActiveTabToFile(string filePath)
+        public void NavigateActiveTabToFile(string filePath, bool promptSaveAsAfterLoad = false, string pendingLibraryFolderId = null, bool isNotebookDraft = false)
         {
             if (_activeTab == null) return;
 
@@ -458,8 +482,37 @@ namespace Caelum
             _activeTab.Title = name;
             _activeTab.FilePath = filePath;
             _activeTab.Icon = Path.GetExtension(filePath).ToLowerInvariant() == ".pdf" ? "\uEA90" : "\uE7C3";
-            ActiveFrame?.Navigate(new EditorPage(filePath));
+            ActiveFrame?.Navigate(new EditorPage(filePath, promptSaveAsAfterLoad, pendingLibraryFolderId, isNotebookDraft));
             RebuildTabBar();
+        }
+
+        public void HandleFilePathChanged(string oldPath, string newPath)
+        {
+            if (string.IsNullOrWhiteSpace(oldPath) || string.IsNullOrWhiteSpace(newPath))
+                return;
+
+            foreach (var tab in _tabs.Where(tab =>
+                         !string.IsNullOrWhiteSpace(tab.FilePath) &&
+                         string.Equals(tab.FilePath, oldPath, StringComparison.OrdinalIgnoreCase)))
+            {
+                tab.FilePath = newPath;
+                tab.Title = Path.GetFileNameWithoutExtension(newPath);
+                tab.Icon = Path.GetExtension(newPath).ToLowerInvariant() == ".pdf" ? "\uEA90" : "\uE7C3";
+
+                if (tab.Frame?.Content is EditorPage editor)
+                    editor.UpdateCurrentPdfPath(newPath);
+            }
+
+            if (_activeTab != null &&
+                !string.IsNullOrWhiteSpace(_activeTab.FilePath) &&
+                string.Equals(_activeTab.FilePath, newPath, StringComparison.OrdinalIgnoreCase))
+            {
+                UpdateActiveTabInfo();
+            }
+            else
+            {
+                RebuildTabBar();
+            }
         }
 
         private void MainWindow_KeyDown(object sender, KeyEventArgs e)
@@ -508,6 +561,7 @@ namespace Caelum
         private void MainWindow_SourceInitialized(object sender, EventArgs e)
         {
             var handle = new WindowInteropHelper(this).Handle;
+            HwndSource.FromHwnd(handle)?.AddHook(WndProc);
 
             // Enforce transparent icon at Win32 level
             try
@@ -546,6 +600,45 @@ namespace Caelum
 
 
         // 鈹€鈹€鈹€ Header Toolbar Buttons 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+        private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
+        {
+            if (msg == WM_GETMINMAXINFO)
+            {
+                UpdateMaximizedBounds(hwnd, lParam);
+                handled = true;
+            }
+
+            return IntPtr.Zero;
+        }
+
+        private static void UpdateMaximizedBounds(IntPtr hwnd, IntPtr lParam)
+        {
+            var monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+            if (monitor == IntPtr.Zero)
+                return;
+
+            var monitorInfo = new MONITORINFO
+            {
+                cbSize = Marshal.SizeOf<MONITORINFO>()
+            };
+
+            if (!GetMonitorInfo(monitor, ref monitorInfo))
+                return;
+
+            var minMaxInfo = Marshal.PtrToStructure<MINMAXINFO>(lParam);
+            var workArea = monitorInfo.rcWork;
+            var monitorArea = monitorInfo.rcMonitor;
+
+            minMaxInfo.ptMaxPosition.x = workArea.left - monitorArea.left;
+            minMaxInfo.ptMaxPosition.y = workArea.top - monitorArea.top;
+            minMaxInfo.ptMaxSize.x = workArea.right - workArea.left;
+            minMaxInfo.ptMaxSize.y = workArea.bottom - workArea.top;
+            minMaxInfo.ptMaxTrackSize.x = minMaxInfo.ptMaxSize.x;
+            minMaxInfo.ptMaxTrackSize.y = minMaxInfo.ptMaxSize.y;
+
+            Marshal.StructureToPtr(minMaxInfo, lParam, false);
+        }
+
         private void SearchBox_TextChanged(object sender, TextChangedEventArgs e)
         {
             if (ActiveFrame?.Content is HomePage home)
@@ -559,6 +652,7 @@ namespace Caelum
             if (ActiveFrame?.Content is HomePage home)
             {
                 home.ToggleSelectionMode();
+                RefreshSelectButtonVisualState();
                 ShowToast(home.IsSelectionMode ? LocalizationService.Get("Main.SelectionEnabled") : LocalizationService.Get("Main.SelectionDisabled"), "\uE762");
                 return;
             }
@@ -566,6 +660,7 @@ namespace Caelum
             if (ActiveFrame?.Content is EditorPage editor)
             {
                 editor.ToggleSelectionMode();
+                RefreshSelectButtonVisualState();
                 ShowToast(editor.IsSelectionMode ? LocalizationService.Get("Main.SelectionEnabled") : LocalizationService.Get("Main.SelectionDisabled"), "\uE762");
             }
         }
@@ -646,9 +741,50 @@ namespace Caelum
         [DllImport("user32.dll")]
         private static extern bool ChangeWindowMessageFilterEx(IntPtr hwnd, uint message, uint action, IntPtr pChangeFilterStruct);
 
+        [DllImport("user32.dll")]
+        private static extern IntPtr MonitorFromWindow(IntPtr hwnd, uint dwFlags);
+
+        [DllImport("user32.dll", CharSet = CharSet.Auto)]
+        private static extern bool GetMonitorInfo(IntPtr hMonitor, ref MONITORINFO lpmi);
+
         // 鈹€鈹€鈹€ Acrylic Blur (Glassmorphism) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
         [DllImport("user32.dll")]
         private static extern int SetWindowCompositionAttribute(IntPtr hwnd, ref WindowCompositionAttributeData data);
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct POINT
+        {
+            public int x;
+            public int y;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct MINMAXINFO
+        {
+            public POINT ptReserved;
+            public POINT ptMaxSize;
+            public POINT ptMaxPosition;
+            public POINT ptMinTrackSize;
+            public POINT ptMaxTrackSize;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct RECT
+        {
+            public int left;
+            public int top;
+            public int right;
+            public int bottom;
+        }
+
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Auto)]
+        private struct MONITORINFO
+        {
+            public int cbSize;
+            public RECT rcMonitor;
+            public RECT rcWork;
+            public int dwFlags;
+        }
 
         [StructLayout(LayoutKind.Sequential)]
         private struct WindowCompositionAttributeData
@@ -675,12 +811,3 @@ namespace Caelum
         }
     }
 }
-
-
-
-
-
-
-
-
-
