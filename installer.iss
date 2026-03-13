@@ -3,9 +3,9 @@
 ; Program Files installation, and an uninstaller.
 
 #define MyAppName "Caelum"
-#define MyAppVersion "3.0.2"
+#define MyAppVersion "3.0.3"
 #define MyAppPublisher "Learnmore_smart"
-#define MyAppURL "https://github.com/Learnmore-smart/Windows-Notes"
+#define MyAppURL "https://github.com/Learnmore-smart/Caelum"
 #define MyAppExeName "Caelum.exe"
 
 [Setup]

@@ -10,10 +10,10 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <AssemblyName>Caelum</AssemblyName>
     <ApplicationIcon>Assets\app-icon.ico</ApplicationIcon>
-    <Version>3.0.2</Version>
-    <AssemblyVersion>3.0.2.0</AssemblyVersion>
-    <FileVersion>3.0.2.0</FileVersion>
-    <InformationalVersion>3.0.2</InformationalVersion>
+    <Version>3.0.3</Version>
+    <AssemblyVersion>3.0.3.0</AssemblyVersion>
+    <FileVersion>3.0.3.0</FileVersion>
+    <InformationalVersion>3.0.3</InformationalVersion>
     <Authors>Learnmore_smart</Authors>
     <Company>Learnmore_smart</Company>
     <Product>Caelum</Product>
