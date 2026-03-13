@@ -322,12 +322,10 @@ namespace Caelum
             var capturedTab = tab;
             closeBtn.Click += (s, e) => { e.Handled = true; CloseTab(capturedTab); };
 
-            var panel = new StackPanel
-            {
-                Orientation = Orientation.Horizontal,
-                Margin = new Thickness(10, 0, 8, 0),
-                VerticalAlignment = VerticalAlignment.Center
-            };
+            var panel = new StackPanel();
+            panel.Orientation = Orientation.Horizontal;
+            panel.Margin = new Thickness(10, 0, 8, 0);
+            panel.VerticalAlignment = VerticalAlignment.Center;
             panel.Children.Add(icon);
             panel.Children.Add(title);
             panel.Children.Add(closeBtn);
