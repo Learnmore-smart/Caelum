@@ -816,7 +816,20 @@ namespace Caelum.Services
             try
             {
                 // Read the entire PDF into memory first to avoid file locking issues
+<<<<<<< HEAD
                 byte[] pdfBytes = File.ReadAllBytes(filePath);
+=======
+                byte[] pdfBytes;
+                using (var sourceStream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read))
+                {
+                    pdfBytes = new byte[sourceStream.Length];
+                    int bytesRead = sourceStream.Read(pdfBytes, 0, pdfBytes.Length);
+                    if (bytesRead != sourceStream.Length)
+                    {
+                        throw new IOException($"Failed to read complete PDF file. Expected {sourceStream.Length} bytes, but read {bytesRead} bytes.");
+                    }
+                }
+>>>>>>> 67232efc56a824e22b931276e6a255d8024ac90d
 
                 // Use a memory stream for PDF operations to avoid file system issues
                 using (var memoryStream = new MemoryStream(pdfBytes))
@@ -1019,7 +1032,7 @@ namespace Caelum.Services
                     // Save the document to the temporary file
                     using (var outputStream = new FileStream(tempPath, FileMode.Create, FileAccess.Write, FileShare.None))
                     {
-                        document.Save(outputStream);
+                        document.Save(outputStream, false);
                     }
                 }
 
