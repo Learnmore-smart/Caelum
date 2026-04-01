@@ -790,6 +790,16 @@ namespace Caelum.Pages
                     mw?.ShowToast("Text copied", "\uE8C8", 1500);
                     e.Handled = true;
                 }
+                else if (_activeSelectionPage != null && _activeSelectionPage.HasSelection)
+                {
+                    CopySelection();
+                    e.Handled = true;
+                }
+            }
+            else if (Keyboard.Modifiers == ModifierKeys.Control && e.Key == Key.V)
+            {
+                PasteSelection();
+                e.Handled = true;
             }
             else if (Keyboard.Modifiers == ModifierKeys.Control && (e.Key == Key.D0 || e.Key == Key.NumPad0))
             {
@@ -1849,59 +1859,161 @@ namespace Caelum.Pages
             if (_activeSelectionPage == null || !_activeSelectionPage.HasSelection)
                 return;
 
-            // Create annotation data for selected items
-            var annotationData = new AnnotationData();
-            var pageAnnotation = new PageAnnotation();
-
-            // Add selected strokes
-            foreach (var stroke in _activeSelectionPage.SelectedStrokes)
+            try
             {
-                var strokeAnnotation = new StrokeAnnotation
-                {
-                    R = stroke.DrawingAttributes.Color.R,
-                    G = stroke.DrawingAttributes.Color.G,
-                    B = stroke.DrawingAttributes.Color.B,
-                    A = stroke.DrawingAttributes.Color.A,
-                    Size = stroke.DrawingAttributes.Width,
-                    IsHighlighter = false, // Default value for now
-                    Points = new List<double[]>()
-                };
+                // Create annotation data for selected items
+                var annotationData = new AnnotationData();
+                var pageAnnotation = new PageAnnotation();
 
-                foreach (var point in stroke.StylusPoints)
+                // Add selected strokes
+                foreach (var stroke in _activeSelectionPage.SelectedStrokes)
                 {
-                    strokeAnnotation.Points.Add(new double[] { point.X, point.Y });
-                }
-
-                pageAnnotation.Strokes.Add(strokeAnnotation);
-            }
-
-            // Add selected text annotations
-            foreach (var container in _activeSelectionPage.SelectedTextContainers)
-            {
-                if (container.Children.OfType<TextBox>().FirstOrDefault() is TextBox textBox)
-                {
-                    var textAnnotation = new TextAnnotation
+                    var strokeAnnotation = new StrokeAnnotation
                     {
-                        Text = textBox.Text,
-                        X = Canvas.GetLeft(container),
-                        Y = Canvas.GetTop(container),
-                        R = ((SolidColorBrush)textBox.Foreground).Color.R,
-                        G = ((SolidColorBrush)textBox.Foreground).Color.G,
-                        B = ((SolidColorBrush)textBox.Foreground).Color.B,
-                        FontSize = textBox.FontSize
+                        R = stroke.DrawingAttributes.Color.R,
+                        G = stroke.DrawingAttributes.Color.G,
+                        B = stroke.DrawingAttributes.Color.B,
+                        A = stroke.DrawingAttributes.Color.A,
+                        Size = stroke.DrawingAttributes.Width,
+                        IsHighlighter = stroke.DrawingAttributes.IsHighlighter,
+                        Points = new List<double[]>()
                     };
 
-                    pageAnnotation.Texts.Add(textAnnotation);
+                    foreach (var point in stroke.StylusPoints)
+                    {
+                        strokeAnnotation.Points.Add(new double[] { point.X, point.Y });
+                    }
+
+                    pageAnnotation.Strokes.Add(strokeAnnotation);
                 }
+
+                // Add selected text annotations
+                foreach (var container in _activeSelectionPage.SelectedTextContainers)
+                {
+                    if (container.Children.OfType<TextBox>().FirstOrDefault() is TextBox textBox)
+                    {
+                        var textAnnotation = new TextAnnotation
+                        {
+                            Text = textBox.Text,
+                            X = Canvas.GetLeft(container),
+                            Y = Canvas.GetTop(container),
+                            R = ((SolidColorBrush)textBox.Foreground).Color.R,
+                            G = ((SolidColorBrush)textBox.Foreground).Color.G,
+                            B = ((SolidColorBrush)textBox.Foreground).Color.B,
+                            FontSize = textBox.FontSize
+                        };
+
+                        pageAnnotation.Texts.Add(textAnnotation);
+                    }
+                }
+
+                annotationData.Pages["0"] = pageAnnotation;
+
+                // Serialize to JSON
+                var json = System.Text.Json.JsonSerializer.Serialize(annotationData);
+
+                // Copy to clipboard
+                System.Windows.Clipboard.SetText(json);
+
+                var mw = Window.GetWindow(this) as MainWindow;
+                mw?.ShowToast("Selection copied", "\uE14D", 1500);
             }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[CopySelection] Error: {ex.Message}");
+            }
+        }
 
-            annotationData.Pages["0"] = pageAnnotation;
+        private void PasteSelection()
+        {
+            try
+            {
+                if (!System.Windows.Clipboard.ContainsText())
+                    return;
 
-            // Serialize to JSON
-            var json = System.Text.Json.JsonSerializer.Serialize(annotationData);
+                var json = System.Windows.Clipboard.GetText();
+                if (string.IsNullOrWhiteSpace(json))
+                    return;
 
-            // Copy to clipboard
-            System.Windows.Clipboard.SetText(json);
+                var annotationData = System.Text.Json.JsonSerializer.Deserialize<AnnotationData>(json);
+                if (annotationData?.Pages == null || !annotationData.Pages.ContainsKey("0"))
+                    return;
+
+                var pageAnnotation = annotationData.Pages["0"];
+                if (pageAnnotation == null)
+                    return;
+
+                // Find the active page - prefer _activeSelectionPage, otherwise find first visible page
+                var targetPage = _activeSelectionPage;
+                if (targetPage == null)
+                {
+                    targetPage = _pageControls.FirstOrDefault();
+                }
+
+                if (targetPage == null)
+                    return;
+
+                // Add a small offset to prevent pasting exactly on top of original
+                const double pasteOffset = 20.0;
+
+                // Paste strokes
+                if (pageAnnotation.Strokes != null)
+                {
+                    foreach (var strokeAnnotation in pageAnnotation.Strokes)
+                    {
+                        // Apply paste offset
+                        var offsetStroke = new StrokeAnnotation
+                        {
+                            R = strokeAnnotation.R,
+                            G = strokeAnnotation.G,
+                            B = strokeAnnotation.B,
+                            A = strokeAnnotation.A,
+                            Size = strokeAnnotation.Size,
+                            IsHighlighter = strokeAnnotation.IsHighlighter,
+                            Points = new List<double[]>()
+                        };
+
+                        foreach (var point in strokeAnnotation.Points)
+                        {
+                            offsetStroke.Points.Add(new double[] { point[0] + pasteOffset, point[1] + pasteOffset });
+                        }
+
+                        targetPage.AddStroke(offsetStroke);
+                    }
+                }
+
+                // Paste text annotations
+                if (pageAnnotation.Texts != null)
+                {
+                    foreach (var textAnnotation in pageAnnotation.Texts)
+                    {
+                        var offsetTextAnnotation = new TextAnnotation
+                        {
+                            Text = textAnnotation.Text,
+                            X = textAnnotation.X + pasteOffset,
+                            Y = textAnnotation.Y + pasteOffset,
+                            R = textAnnotation.R,
+                            G = textAnnotation.G,
+                            B = textAnnotation.B,
+                            FontSize = textAnnotation.FontSize
+                        };
+
+                        // Create the text box on the target page
+                        var color = Color.FromRgb(offsetTextAnnotation.R, offsetTextAnnotation.G, offsetTextAnnotation.B);
+                        CreateTextBox(targetPage, new Point(offsetTextAnnotation.X, offsetTextAnnotation.Y), color, offsetTextAnnotation.FontSize, offsetTextAnnotation.Text, select: false, alignToPointer: false);
+                    }
+                }
+
+                MarkDirty();
+
+                var mw = Window.GetWindow(this) as MainWindow;
+                mw?.ShowToast("Selection pasted", "\uE14D", 1500);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[PasteSelection] Error: {ex.Message}");
+                // Don't crash if paste fails - just ignore
+            }
         }
 
         private Popup BuildToolPopup(
