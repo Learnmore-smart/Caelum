@@ -820,7 +820,11 @@ namespace Caelum.Services
                 using (var sourceStream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read))
                 {
                     pdfBytes = new byte[sourceStream.Length];
-                    sourceStream.Read(pdfBytes, 0, pdfBytes.Length);
+                    int bytesRead = sourceStream.Read(pdfBytes, 0, pdfBytes.Length);
+                    if (bytesRead != sourceStream.Length)
+                    {
+                        throw new IOException($"Failed to read complete PDF file. Expected {sourceStream.Length} bytes, but read {bytesRead} bytes.");
+                    }
                 }
 
                 // Use a memory stream for PDF operations to avoid file system issues
@@ -1024,7 +1028,7 @@ namespace Caelum.Services
                     // Save the document to the temporary file
                     using (var outputStream = new FileStream(tempPath, FileMode.Create, FileAccess.Write, FileShare.None))
                     {
-                        document.Save(outputStream);
+                        document.Save(outputStream, false);
                     }
                 }
 
