@@ -1754,6 +1754,27 @@ namespace Caelum.Pages
             };
             scaleUpButton.Click += (s, e) => ScaleSelection(1.1);
 
+            var copyButton = new Button
+            {
+                Width = 36, Height = 32,
+                Background = Brushes.Transparent,
+                BorderThickness = new Thickness(0),
+                Cursor = Cursors.Hand,
+                ToolTip = "Copy",
+                Margin = new Thickness(2)
+            };
+            copyButton.Template = CreateIconButtonTemplate("#E0F2FE", "#BAE6FD");
+            copyButton.Content = new TextBlock
+            {
+                Text = "\uE14D",
+                FontFamily = new FontFamily("Segoe MDL2 Assets"),
+                FontSize = 14,
+                Foreground = new SolidColorBrush(Color.FromRgb(34, 197, 94)),
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            copyButton.Click += (s, e) => CopySelection();
+
             var deleteButton = new Button
             {
                 Width = 36, Height = 32,
@@ -1780,6 +1801,7 @@ namespace Caelum.Pages
 
             var sep = new Border { Width = 1, Background = new SolidColorBrush(Color.FromArgb(20, 0, 0, 0)), Margin = new Thickness(4, 6, 4, 6) };
             actionPanel.Children.Add(sep);
+            actionPanel.Children.Add(copyButton);
             actionPanel.Children.Add(deleteButton);
 
             _selectionActionPopup.Child = actionBorder;
@@ -1820,6 +1842,66 @@ namespace Caelum.Pages
             _activeSelectionPage.ClearSelection();
             _selectionActionPopup.IsOpen = false;
             MarkDirty();
+        }
+
+        private void CopySelection()
+        {
+            if (_activeSelectionPage == null || !_activeSelectionPage.HasSelection)
+                return;
+
+            // Create annotation data for selected items
+            var annotationData = new AnnotationData();
+            var pageAnnotation = new PageAnnotation();
+
+            // Add selected strokes
+            foreach (var stroke in _activeSelectionPage.SelectedStrokes)
+            {
+                var strokeAnnotation = new StrokeAnnotation
+                {
+                    R = stroke.DrawingAttributes.Color.R,
+                    G = stroke.DrawingAttributes.Color.G,
+                    B = stroke.DrawingAttributes.Color.B,
+                    A = stroke.DrawingAttributes.Color.A,
+                    Size = stroke.DrawingAttributes.Width,
+                    IsHighlighter = false, // Default value for now
+                    Points = new List<double[]>()
+                };
+
+                foreach (var point in stroke.StylusPoints)
+                {
+                    strokeAnnotation.Points.Add(new double[] { point.X, point.Y });
+                }
+
+                pageAnnotation.Strokes.Add(strokeAnnotation);
+            }
+
+            // Add selected text annotations
+            foreach (var container in _activeSelectionPage.SelectedTextContainers)
+            {
+                if (container.Children.OfType<TextBox>().FirstOrDefault() is TextBox textBox)
+                {
+                    var textAnnotation = new TextAnnotation
+                    {
+                        Text = textBox.Text,
+                        X = Canvas.GetLeft(container),
+                        Y = Canvas.GetTop(container),
+                        R = ((SolidColorBrush)textBox.Foreground).Color.R,
+                        G = ((SolidColorBrush)textBox.Foreground).Color.G,
+                        B = ((SolidColorBrush)textBox.Foreground).Color.B,
+                        FontSize = textBox.FontSize
+                    };
+
+                    pageAnnotation.Texts.Add(textAnnotation);
+                }
+            }
+
+            annotationData.Pages["0"] = pageAnnotation;
+
+            // Serialize to JSON
+            var json = System.Text.Json.JsonSerializer.Serialize(annotationData);
+
+            // Copy to clipboard
+            System.Windows.Clipboard.SetText(json);
         }
 
         private Popup BuildToolPopup(
@@ -3028,7 +3110,7 @@ namespace Caelum.Pages
 
         private void InitializeTextBoxPopup()
         {
-            _textBoxPopup = new Popup { Placement = PlacementMode.Bottom, StaysOpen = true, AllowsTransparency = true, VerticalOffset = 10 };
+            _textBoxPopup = new Popup { Placement = PlacementMode.Top, StaysOpen = true, AllowsTransparency = true, VerticalOffset = -10 };
 
             var panel = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(4) };
             var border = new Border

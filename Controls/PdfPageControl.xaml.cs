@@ -1155,6 +1155,9 @@ namespace Caelum.Controls
 
         public bool HasSelection => _selectedStrokes.Count > 0 || _selectedTextContainers.Count > 0;
 
+        public List<Stroke> SelectedStrokes => _selectedStrokes;
+        public List<Grid> SelectedTextContainers => _selectedTextContainers;
+
         private void UpdateSelectionVisuals()
         {
             var bounds = GetSelectionBounds();
