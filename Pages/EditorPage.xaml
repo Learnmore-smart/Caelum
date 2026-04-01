@@ -130,8 +130,8 @@
         </ScrollViewer>
 
         <!-- Floating Toolbar -->
-        <Border x:Name="ToolbarBorder" HorizontalAlignment="Center" VerticalAlignment="Top"
-                Margin="0,12,0,0" Padding="8,4" CornerRadius="14"
+        <Border x:Name="ToolbarBorder" HorizontalAlignment="Left" VerticalAlignment="Top"
+                Margin="32,12,0,0" Padding="8,4" CornerRadius="14"
                 Background="White"
                 BorderBrush="#D1D5DB"
                 BorderThickness="1">
