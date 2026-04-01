@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
+using System.Windows.Ink;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
@@ -54,10 +55,7 @@ namespace Caelum.Pages
         private Popup _penPopup;
         private Popup _highlighterPopup;
         private Popup _eraserPopup;
-        private Popup _selectionPopup;       // settings popup (opens on button click)
-        private Popup _selectionActionPopup; // action popup (opens when selection exists)
-        private Button _scaleUpButton;
-        private Button _scaleDownButton;
+        private Popup _selectionPopup;
         private PdfPageControl _activeSelectionPage;
 
         private const double PdfTextSelectionDragThreshold = 4.0;
@@ -267,7 +265,6 @@ namespace Caelum.Pages
             FixPopupTopmost(_highlighterPopup);
             FixPopupTopmost(_eraserPopup);
             FixPopupTopmost(_selectionPopup);
-            FixPopupTopmost(_selectionActionPopup);
 
             KeyDown += EditorPage_KeyDown;
 
@@ -784,10 +781,34 @@ namespace Caelum.Pages
             }
             else if (Keyboard.Modifiers == ModifierKeys.Control && e.Key == Key.C)
             {
-                if (TryCopySelectedPdfTextToClipboard())
+                if (_activeSelectionPage != null && _activeSelectionPage.HasSelection)
+                {
+                    CopySelection();
+                    var mw = Window.GetWindow(this) as MainWindow;
+                    mw?.ShowToast("Copied", "\uE8C8", 1500);
+                    e.Handled = true;
+                }
+                else if (TryCopySelectedPdfTextToClipboard())
                 {
                     var mw = Window.GetWindow(this) as MainWindow;
                     mw?.ShowToast("Text copied", "\uE8C8", 1500);
+                    e.Handled = true;
+                }
+            }
+            else if (Keyboard.Modifiers == ModifierKeys.Control && e.Key == Key.V)
+            {
+                if (PasteSelection())
+                {
+                    var mw = Window.GetWindow(this) as MainWindow;
+                    mw?.ShowToast("Pasted", "\uE8C8", 1500);
+                    e.Handled = true;
+                }
+            }
+            else if (e.Key == Key.Delete)
+            {
+                if (_activeSelectionPage != null && _activeSelectionPage.HasSelection)
+                {
+                    DeleteSelection();
                     e.Handled = true;
                 }
             }
@@ -1694,117 +1715,6 @@ namespace Caelum.Pages
 
             settingsPanel.Children.Add(filterPanel);
             _selectionPopup.Child = settingsBorder;
-
-            // ── Action popup (opens when annotations are selected) ──────────────────
-            _selectionActionPopup = new Popup { Placement = PlacementMode.Bottom, StaysOpen = true, AllowsTransparency = true, VerticalOffset = 6 };
-
-            var actionPanel = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(6, 6, 6, 6) };
-            var actionBorder = new Border
-            {
-                Background = new SolidColorBrush(Color.FromArgb(245, 255, 255, 255)),
-                BorderBrush = new SolidColorBrush(Color.FromArgb(20, 0, 0, 0)),
-                BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(12),
-                Child = actionPanel,
-                Effect = new System.Windows.Media.Effects.DropShadowEffect
-                {
-                    BlurRadius = 20, ShadowDepth = 4, Opacity = 0.14, Color = Colors.Black
-                }
-            };
-
-            var scaleDownButton = new Button
-            {
-                Width = 36, Height = 32,
-                Background = Brushes.Transparent,
-                BorderThickness = new Thickness(0),
-                Cursor = Cursors.Hand,
-                ToolTip = LocalizationService.Get("Editor.ZoomOutTooltip"),
-                Margin = new Thickness(2)
-            };
-            scaleDownButton.Template = CreateIconButtonTemplate("#E8E8E8", "#DCDCDC");
-            scaleDownButton.Content = new TextBlock
-            {
-                Text = "\uE738",
-                FontFamily = new FontFamily("Segoe MDL2 Assets"),
-                FontSize = 14,
-                Foreground = new SolidColorBrush(Color.FromRgb(85, 85, 85)),
-                HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Center
-            };
-            scaleDownButton.Click += (s, e) => ScaleSelection(0.9);
-
-            var scaleUpButton = new Button
-            {
-                Width = 36, Height = 32,
-                Background = Brushes.Transparent,
-                BorderThickness = new Thickness(0),
-                Cursor = Cursors.Hand,
-                ToolTip = LocalizationService.Get("Editor.ZoomInTooltip"),
-                Margin = new Thickness(2)
-            };
-            scaleUpButton.Template = CreateIconButtonTemplate("#E8E8E8", "#DCDCDC");
-            scaleUpButton.Content = new TextBlock
-            {
-                Text = "\uE710",
-                FontFamily = new FontFamily("Segoe MDL2 Assets"),
-                FontSize = 14,
-                Foreground = new SolidColorBrush(Color.FromRgb(85, 85, 85)),
-                HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Center
-            };
-            scaleUpButton.Click += (s, e) => ScaleSelection(1.1);
-
-            var copyButton = new Button
-            {
-                Width = 36, Height = 32,
-                Background = Brushes.Transparent,
-                BorderThickness = new Thickness(0),
-                Cursor = Cursors.Hand,
-                ToolTip = "Copy",
-                Margin = new Thickness(2)
-            };
-            copyButton.Template = CreateIconButtonTemplate("#E0F2FE", "#BAE6FD");
-            copyButton.Content = new TextBlock
-            {
-                Text = "\uE14D",
-                FontFamily = new FontFamily("Segoe MDL2 Assets"),
-                FontSize = 14,
-                Foreground = new SolidColorBrush(Color.FromRgb(34, 197, 94)),
-                HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Center
-            };
-            copyButton.Click += (s, e) => CopySelection();
-
-            var deleteButton = new Button
-            {
-                Width = 36, Height = 32,
-                Background = Brushes.Transparent,
-                BorderThickness = new Thickness(0),
-                Cursor = Cursors.Hand,
-                ToolTip = LocalizationService.Get("Editor.DeleteTooltip"),
-                Margin = new Thickness(2)
-            };
-            deleteButton.Template = CreateIconButtonTemplate("#FECACA", "#FCA5A5");
-            deleteButton.Content = new TextBlock
-            {
-                Text = "\uE74D",
-                FontFamily = new FontFamily("Segoe MDL2 Assets"),
-                FontSize = 14,
-                Foreground = new SolidColorBrush(Color.FromRgb(220, 38, 38)),
-                HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Center
-            };
-            deleteButton.Click += (s, e) => DeleteSelection();
-
-            actionPanel.Children.Add(scaleDownButton);
-            actionPanel.Children.Add(scaleUpButton);
-
-            var sep = new Border { Width = 1, Background = new SolidColorBrush(Color.FromArgb(20, 0, 0, 0)), Margin = new Thickness(4, 6, 4, 6) };
-            actionPanel.Children.Add(sep);
-            actionPanel.Children.Add(copyButton);
-            actionPanel.Children.Add(deleteButton);
-
-            _selectionActionPopup.Child = actionBorder;
         }
 
         private void UpdateFilterButtonStyle(Button btn, bool isActive)
@@ -1840,7 +1750,6 @@ namespace Caelum.Pages
                 return;
 
             _activeSelectionPage.ClearSelection();
-            _selectionActionPopup.IsOpen = false;
             MarkDirty();
         }
 
@@ -1897,11 +1806,83 @@ namespace Caelum.Pages
 
             annotationData.Pages["0"] = pageAnnotation;
 
-            // Serialize to JSON
             var json = System.Text.Json.JsonSerializer.Serialize(annotationData);
 
-            // Copy to clipboard
             System.Windows.Clipboard.SetText(json);
+        }
+
+        private bool PasteSelection()
+        {
+            if (!System.Windows.Clipboard.ContainsText())
+                return false;
+
+            var json = System.Windows.Clipboard.GetText();
+            if (string.IsNullOrEmpty(json))
+                return false;
+
+            AnnotationData annotationData;
+            PageAnnotation pageAnnotation;
+            try
+            {
+                annotationData = System.Text.Json.JsonSerializer.Deserialize<AnnotationData>(json);
+                if (annotationData == null || !annotationData.Pages.TryGetValue("0", out pageAnnotation))
+                    return false;
+            }
+            catch
+            {
+                return false;
+            }
+
+            var page = GetFirstVisiblePage();
+            if (page == null)
+                return false;
+
+            double offsetX = 20;
+            double offsetY = 20;
+
+            foreach (var strokeAnnotation in pageAnnotation.Strokes)
+            {
+                var points = new StylusPointCollection();
+                foreach (var pt in strokeAnnotation.Points)
+                {
+                    if (pt.Length >= 2)
+                        points.Add(new StylusPoint(pt[0] + offsetX, pt[1] + offsetY));
+                }
+
+                var stroke = new Stroke(points)
+                {
+                    DrawingAttributes = new DrawingAttributes
+                    {
+                        Color = Color.FromArgb(strokeAnnotation.A, strokeAnnotation.R, strokeAnnotation.G, strokeAnnotation.B),
+                        Width = strokeAnnotation.Size,
+                        Height = strokeAnnotation.Size,
+                        FitToCurve = true
+                    }
+                };
+                page.AddStrokeQuiet(stroke);
+            }
+
+            foreach (var textAnnotation in pageAnnotation.Texts)
+            {
+                var position = new Point(textAnnotation.X + offsetX, textAnnotation.Y + offsetY);
+                var color = Color.FromRgb(textAnnotation.R, textAnnotation.G, textAnnotation.B);
+                CreateTextBox(page, position, color, textAnnotation.FontSize, textAnnotation.Text, select: false);
+            }
+
+            MarkDirty();
+            return true;
+        }
+
+        private PdfPageControl GetFirstVisiblePage()
+        {
+            foreach (var page in _pageControls)
+            {
+                var bounds = new Rect(0, 0, PdfScrollViewer.ViewportWidth, PdfScrollViewer.ViewportHeight);
+                var pageBounds = new Rect(Canvas.GetLeft(page), Canvas.GetTop(page), page.ActualWidth, page.ActualHeight);
+                if (bounds.IntersectsWith(pageBounds))
+                    return page;
+            }
+            return _pageControls.FirstOrDefault();
         }
 
         private Popup BuildToolPopup(
@@ -2188,8 +2169,6 @@ namespace Caelum.Pages
 
             if (toolToKeepOpen != ToolType.Select && _selectionPopup != null)
                 _selectionPopup.IsOpen = false;
-            if (toolToKeepOpen != ToolType.Select && _selectionActionPopup != null)
-                _selectionActionPopup.IsOpen = false;
         }
 
         private void ToggleToolButton(ToolType tool, ToggleButton button, Popup popup = null)
@@ -2704,16 +2683,6 @@ namespace Caelum.Pages
             {
                 _activeSelectionPage = page;
             }
-
-            if (e.HasSelection)
-            {
-                _selectionActionPopup.PlacementTarget = SelectToolButton;
-                _selectionActionPopup.IsOpen = true;
-            }
-            else
-            {
-                _selectionActionPopup.IsOpen = false;
-            }
         }
 
         private void PageControl_SelectionMoveCompleted(object sender, SelectionMoveCompletedEventArgs e)
@@ -3110,7 +3079,7 @@ namespace Caelum.Pages
 
         private void InitializeTextBoxPopup()
         {
-            _textBoxPopup = new Popup { Placement = PlacementMode.Top, StaysOpen = true, AllowsTransparency = true, VerticalOffset = -10 };
+            _textBoxPopup = new Popup { Placement = PlacementMode.Relative, StaysOpen = true, AllowsTransparency = true, VerticalOffset = -50, HorizontalOffset = 0 };
 
             var panel = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(4) };
             var border = new Border

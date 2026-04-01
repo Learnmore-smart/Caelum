@@ -816,12 +816,7 @@ namespace Caelum.Services
             try
             {
                 // Read the entire PDF into memory first to avoid file locking issues
-                byte[] pdfBytes;
-                using (var sourceStream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read))
-                {
-                    pdfBytes = new byte[sourceStream.Length];
-                    sourceStream.Read(pdfBytes, 0, pdfBytes.Length);
-                }
+                byte[] pdfBytes = File.ReadAllBytes(filePath);
 
                 // Use a memory stream for PDF operations to avoid file system issues
                 using (var memoryStream = new MemoryStream(pdfBytes))
