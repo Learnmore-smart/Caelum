@@ -22,9 +22,13 @@ namespace Caelum
     {
         private const int WM_GETMINMAXINFO = 0x0024;
         private const uint MONITOR_DEFAULTTONEAREST = 0x00000002;
+        private const string TabDragDataFormat = "Caelum.AppTab";
 
         private readonly List<AppTab> _tabs = new List<AppTab>();
         private AppTab _activeTab;
+        private Point _tabDragStartPoint;
+        private AppTab _tabDragCandidate;
+        private bool _isTabDragInProgress;
 
         public MainWindow()
         {
@@ -132,6 +136,7 @@ namespace Caelum
         // 鈹€鈹€鈹€ Tab Management 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
         private Frame ActiveFrame => _activeTab?.Frame;
+        internal bool IsActiveContent(object content) => ReferenceEquals(ActiveFrame?.Content, content);
 
         public void AddNewHomeTab(bool activate = true)
         {
@@ -340,6 +345,7 @@ namespace Caelum
                 Margin = new Thickness(0, 0, 4, 0),
                 Height = 32,
                 MinWidth = 72,
+                AllowDrop = true,
                 Cursor = Cursors.Hand,
                 SnapsToDevicePixels = true
             };
@@ -364,7 +370,49 @@ namespace Caelum
                 closeBtn.Opacity = capturedTab == _activeTab ? 1 : 0.72;
             };
 
-            border.MouseLeftButtonDown += (s, e) => ActivateTab(capturedTab);
+            border.PreviewMouseLeftButtonDown += (s, e) =>
+            {
+                if (e.OriginalSource is DependencyObject source && IsDescendantOf(source, closeBtn))
+                    return;
+
+                ActivateTab(capturedTab);
+                _tabDragCandidate = capturedTab;
+                _tabDragStartPoint = e.GetPosition(TabBar);
+            };
+
+            border.PreviewMouseMove += (s, e) =>
+            {
+                if (_isTabDragInProgress ||
+                    _tabDragCandidate != capturedTab ||
+                    e.LeftButton != MouseButtonState.Pressed)
+                {
+                    return;
+                }
+
+                var currentPosition = e.GetPosition(TabBar);
+                if (!HasExceededDragThreshold(_tabDragStartPoint, currentPosition))
+                    return;
+
+                _isTabDragInProgress = true;
+                try
+                {
+                    DragDrop.DoDragDrop(border, new DataObject(TabDragDataFormat, capturedTab.Id), DragDropEffects.Move);
+                }
+                finally
+                {
+                    _isTabDragInProgress = false;
+                    if (_tabDragCandidate == capturedTab)
+                        _tabDragCandidate = null;
+                }
+
+                e.Handled = true;
+            };
+
+            border.PreviewMouseLeftButtonUp += (s, e) =>
+            {
+                if (_tabDragCandidate == capturedTab)
+                    _tabDragCandidate = null;
+            };
 
             // Middle-click to close
             border.MouseDown += (s, e) =>
@@ -376,7 +424,85 @@ namespace Caelum
                 }
             };
 
+            border.DragOver += (s, e) =>
+            {
+                if (TryGetDraggedTab(e.Data, out var draggedTab) && draggedTab != capturedTab)
+                {
+                    e.Effects = DragDropEffects.Move;
+                    e.Handled = true;
+                    return;
+                }
+
+                e.Effects = DragDropEffects.None;
+                e.Handled = true;
+            };
+
+            border.Drop += (s, e) =>
+            {
+                if (!TryGetDraggedTab(e.Data, out var draggedTab) || draggedTab == capturedTab)
+                    return;
+
+                bool insertAfter = e.GetPosition(border).X >= border.ActualWidth / 2;
+                MoveTab(draggedTab, capturedTab, insertAfter);
+                e.Handled = true;
+            };
+
             return border;
+        }
+
+        private bool TryGetDraggedTab(IDataObject data, out AppTab tab)
+        {
+            tab = null;
+            if (data == null || !data.GetDataPresent(TabDragDataFormat))
+                return false;
+
+            var tabId = data.GetData(TabDragDataFormat) as string;
+            if (string.IsNullOrWhiteSpace(tabId))
+                return false;
+
+            tab = _tabs.FirstOrDefault(candidate => string.Equals(candidate.Id, tabId, StringComparison.Ordinal));
+            return tab != null;
+        }
+
+        private void MoveTab(AppTab draggedTab, AppTab targetTab, bool insertAfter)
+        {
+            if (draggedTab == null || targetTab == null || draggedTab == targetTab)
+                return;
+
+            int sourceIndex = _tabs.IndexOf(draggedTab);
+            int targetIndex = _tabs.IndexOf(targetTab);
+            if (sourceIndex < 0 || targetIndex < 0)
+                return;
+
+            _tabs.RemoveAt(sourceIndex);
+            if (sourceIndex < targetIndex)
+                targetIndex--;
+
+            int insertIndex = insertAfter ? targetIndex + 1 : targetIndex;
+            insertIndex = Math.Max(0, Math.Min(insertIndex, _tabs.Count));
+
+            _tabs.Insert(insertIndex, draggedTab);
+            RebuildTabBar();
+        }
+
+        private static bool HasExceededDragThreshold(Point startPoint, Point currentPoint)
+        {
+            return Math.Abs(currentPoint.X - startPoint.X) >= SystemParameters.MinimumHorizontalDragDistance ||
+                   Math.Abs(currentPoint.Y - startPoint.Y) >= SystemParameters.MinimumVerticalDragDistance;
+        }
+
+        private static bool IsDescendantOf(DependencyObject descendant, DependencyObject ancestor)
+        {
+            var current = descendant;
+            while (current != null)
+            {
+                if (current == ancestor)
+                    return true;
+
+                current = VisualTreeHelper.GetParent(current) ?? LogicalTreeHelper.GetParent(current);
+            }
+
+            return false;
         }
 
         // 鈹€鈹€鈹€ Navigation (operates on active tab's frame) 鈹€鈹€

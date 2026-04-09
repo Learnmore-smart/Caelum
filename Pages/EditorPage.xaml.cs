@@ -8,8 +8,10 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
+using System.Windows.Documents;
 using System.Windows.Ink;
 using System.Windows.Input;
+using System.Windows.Markup;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -18,6 +20,7 @@ using Microsoft.Win32;
 using Caelum.Controls;
 using Caelum.Models;
 using Caelum.Services;
+using PdfiumPdfDocument = PdfiumViewer.PdfDocument;
 
 namespace Caelum.Pages
 {
@@ -185,6 +188,13 @@ namespace Caelum.Pages
             public Task RedoAsync() => _owner.ApplyDocumentSnapshotAsync(_afterBytes, _redoFocusPageIndex);
         }
 
+        private sealed class PrintablePageImage
+        {
+            public BitmapSource Bitmap { get; init; }
+            public double Width { get; init; }
+            public double Height { get; init; }
+        }
+
         private readonly List<IUndoAction> _undoStack = new List<IUndoAction>();
         private readonly List<IUndoAction> _redoStack = new List<IUndoAction>();
 
@@ -229,7 +239,7 @@ namespace Caelum.Pages
         private bool _isPinchActive;
 
         private const double ZoomMin = 0.25;
-        private const double ZoomMax = 4.0;
+        private const double ZoomMax = 8.0;
         private const double ZoomStep = 0.1;
 
         // Pen scrolling state
@@ -572,8 +582,20 @@ namespace Caelum.Pages
             _hwndSource = null;
         }
 
+        private bool IsActiveEditorPage()
+        {
+            return Window.GetWindow(this) is MainWindow window &&
+                   window.IsActiveContent(this) &&
+                   IsVisible &&
+                   PdfScrollViewer != null &&
+                   PdfScrollViewer.IsVisible;
+        }
+
         private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
         {
+            if (!IsActiveEditorPage())
+                return IntPtr.Zero;
+
             if (msg == WM_MOUSEWHEEL)
             {
                 int keys = (int)(wParam.ToInt64() & 0xFFFF);
@@ -671,9 +693,15 @@ namespace Caelum.Pages
 
         private void PenService_ToolToggleRequested(object sender, EventArgs e)
         {
+            if (!IsActiveEditorPage())
+                return;
+
             Console.WriteLine($"[EditorPage] ToolToggleRequested received on thread {System.Threading.Thread.CurrentThread.ManagedThreadId}");
             Dispatcher.BeginInvoke(new Action(() =>
             {
+                if (!IsActiveEditorPage())
+                    return;
+
                 Console.WriteLine($"[EditorPage] ToggleEraserMode executing, current={_currentTool}");
                 ToggleEraserMode();
             }));
@@ -681,8 +709,14 @@ namespace Caelum.Pages
 
         private void PenService_PenDeviceDetected(object sender, PenDeviceInfo info)
         {
+            if (!IsActiveEditorPage())
+                return;
+
             Dispatcher.BeginInvoke(new Action(() =>
             {
+                if (!IsActiveEditorPage())
+                    return;
+
                 string brandName = info.PenBrand == PenBrand.Generic ? "Stylus" : info.PenBrand.ToString();
                 string features = "";
                 if (info.SupportsPressure) features += " pressure";
@@ -777,6 +811,11 @@ namespace Caelum.Pages
             else if (Keyboard.Modifiers == ModifierKeys.Control && e.Key == Key.S)
             {
                 await SaveAnnotationsToPdfAsync();
+                e.Handled = true;
+            }
+            else if (Keyboard.Modifiers == ModifierKeys.Control && e.Key == Key.P)
+            {
+                await PrintPdfAsync();
                 e.Handled = true;
             }
             else if (Keyboard.Modifiers == ModifierKeys.Control && e.Key == Key.C)
@@ -2172,24 +2211,25 @@ namespace Caelum.Pages
 
         private void EditorPage_PreviewMouseDown(object sender, MouseButtonEventArgs e)
         {
-            if (ShouldClosePopupAndConsume(e.OriginalSource as DependencyObject))
+            if (ShouldClosePopupOnPointerDown(e.OriginalSource as DependencyObject, out bool consumePointerEvent))
             {
                 CloseToolPopups();
-                e.Handled = true;
+                e.Handled = consumePointerEvent;
             }
         }
 
         private void EditorPage_PreviewStylusDown(object sender, StylusDownEventArgs e)
         {
-            if (ShouldClosePopupAndConsume(e.OriginalSource as DependencyObject))
+            if (ShouldClosePopupOnPointerDown(e.OriginalSource as DependencyObject, out bool consumePointerEvent))
             {
                 CloseToolPopups();
-                e.Handled = true;
+                e.Handled = consumePointerEvent;
             }
         }
 
-        private bool ShouldClosePopupAndConsume(DependencyObject originalSource)
+        private bool ShouldClosePopupOnPointerDown(DependencyObject originalSource, out bool consumePointerEvent)
         {
+            consumePointerEvent = false;
             if (originalSource == null) return false;
 
             var popups = new[] { _penPopup, _highlighterPopup, _eraserPopup, _selectionPopup };
@@ -2213,7 +2253,15 @@ namespace Caelum.Pages
                 return false;
             }
 
+            consumePointerEvent = !IsImmediateDrawingToolActive();
             return true;
+        }
+
+        private bool IsImmediateDrawingToolActive()
+        {
+            return _currentTool == ToolType.Pen ||
+                   _currentTool == ToolType.Highlighter ||
+                   _currentTool == ToolType.Eraser;
         }
 
         private bool IsSourceInPopup(DependencyObject source, Popup popup)
@@ -2969,6 +3017,171 @@ namespace Caelum.Pages
             await SaveAnnotationsToPdfAsync();
         }
 
+        private async void PrintPdf_Click(object sender, RoutedEventArgs e)
+        {
+            await PrintPdfAsync();
+        }
+
+        private async Task PrintPdfAsync()
+        {
+            if (string.IsNullOrWhiteSpace(_currentPdfPath))
+            {
+                GetMainWindow()?.ShowToast("No PDF is currently loaded", "\uE783");
+                return;
+            }
+
+            var dialog = new PrintDialog();
+            if (dialog.ShowDialog() != true)
+                return;
+
+            string originalLoadingText = LoadingText.Text;
+            ShowLoadingOverlay();
+            LoadingText.Text = "Preparing print...";
+
+            try
+            {
+                bool includeAnnotations = PrintAnnotationsToggleButton?.IsChecked != false;
+                var pages = await BuildPrintablePagesAsync(includeAnnotations);
+                if (pages.Count == 0)
+                    throw new InvalidOperationException("The document has no pages to print.");
+
+                var printDocument = CreatePrintDocument(pages, dialog);
+                dialog.PrintDocument(printDocument.DocumentPaginator, Path.GetFileName(_currentPdfPath));
+                GetMainWindow()?.ShowToast("Print job sent", "\uE749", 1500);
+            }
+            catch (Exception ex)
+            {
+                var mw = GetMainWindow();
+                if (mw != null)
+                    await DialogService.ShowErrorAsync(mw, "Error", $"Failed to print PDF: {ex.Message}");
+                else
+                    MessageBox.Show($"Failed to print PDF: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+            finally
+            {
+                LoadingText.Text = originalLoadingText;
+                HideLoadingOverlay();
+            }
+        }
+
+        private async Task<IReadOnlyList<PrintablePageImage>> BuildPrintablePagesAsync(bool includeAnnotations)
+        {
+            string tempPrintPath = null;
+
+            try
+            {
+                string renderPath = _currentPdfPath;
+                if (includeAnnotations)
+                {
+                    string tempDirectory = Path.Combine(Path.GetTempPath(), "Caelum", "Print");
+                    Directory.CreateDirectory(tempDirectory);
+                    tempPrintPath = Path.Combine(tempDirectory, $"{Guid.NewGuid():N}.pdf");
+                    File.Copy(_currentPdfPath, tempPrintPath, true);
+                    await _pdfService.SaveAnnotationsToPdfAsync(tempPrintPath, CollectAnnotations());
+                    renderPath = tempPrintPath;
+                }
+
+                return await Task.Run(() => RenderPrintablePages(renderPath, includeAnnotations));
+            }
+            finally
+            {
+                if (!string.IsNullOrEmpty(tempPrintPath) && File.Exists(tempPrintPath))
+                {
+                    try { File.Delete(tempPrintPath); } catch { }
+                }
+            }
+        }
+
+        private static IReadOnlyList<PrintablePageImage> RenderPrintablePages(string filePath, bool includeAnnotations)
+        {
+            using var document = PdfiumPdfDocument.Load(filePath);
+            var pages = new List<PrintablePageImage>(document.PageCount);
+            const int renderDpi = 220;
+            var renderFlags = includeAnnotations ? PdfiumViewer.PdfRenderFlags.Annotations : (PdfiumViewer.PdfRenderFlags)0;
+
+            for (int pageIndex = 0; pageIndex < document.PageCount; pageIndex++)
+            {
+                var pageSize = document.PageSizes[pageIndex];
+                int width = Math.Max(1, (int)Math.Ceiling(pageSize.Width * renderDpi / 72.0));
+                int height = Math.Max(1, (int)Math.Ceiling(pageSize.Height * renderDpi / 72.0));
+
+                using var gdiBitmap = (System.Drawing.Bitmap)document.Render(pageIndex, width, height, renderDpi, renderDpi, renderFlags);
+                var bitmapData = gdiBitmap.LockBits(
+                    new System.Drawing.Rectangle(0, 0, width, height),
+                    System.Drawing.Imaging.ImageLockMode.ReadOnly,
+                    System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+
+                try
+                {
+                    var bitmapSource = BitmapSource.Create(
+                        width,
+                        height,
+                        renderDpi,
+                        renderDpi,
+                        PixelFormats.Bgra32,
+                        null,
+                        bitmapData.Scan0,
+                        bitmapData.Stride * height,
+                        bitmapData.Stride);
+                    bitmapSource.Freeze();
+
+                    pages.Add(new PrintablePageImage
+                    {
+                        Bitmap = bitmapSource,
+                        Width = pageSize.Width * 96.0 / 72.0,
+                        Height = pageSize.Height * 96.0 / 72.0
+                    });
+                }
+                finally
+                {
+                    gdiBitmap.UnlockBits(bitmapData);
+                }
+            }
+
+            return pages;
+        }
+
+        private static FixedDocument CreatePrintDocument(IReadOnlyList<PrintablePageImage> pages, PrintDialog printDialog)
+        {
+            double printableWidth = printDialog.PrintableAreaWidth > 0 ? printDialog.PrintableAreaWidth : 816;
+            double printableHeight = printDialog.PrintableAreaHeight > 0 ? printDialog.PrintableAreaHeight : 1056;
+
+            var document = new FixedDocument();
+            document.DocumentPaginator.PageSize = new Size(printableWidth, printableHeight);
+
+            foreach (var page in pages)
+            {
+                var fixedPage = new FixedPage
+                {
+                    Width = printableWidth,
+                    Height = printableHeight,
+                    Background = Brushes.White
+                };
+
+                double scale = Math.Min(printableWidth / page.Width, printableHeight / page.Height);
+                double imageWidth = page.Width * scale;
+                double imageHeight = page.Height * scale;
+
+                var image = new Image
+                {
+                    Source = page.Bitmap,
+                    Width = imageWidth,
+                    Height = imageHeight,
+                    Stretch = Stretch.Fill
+                };
+
+                FixedPage.SetLeft(image, Math.Max(0, (printableWidth - imageWidth) / 2));
+                FixedPage.SetTop(image, Math.Max(0, (printableHeight - imageHeight) / 2));
+                fixedPage.Children.Add(image);
+
+                var pageContent = new PageContent();
+                ((IAddChild)pageContent).AddChild(fixedPage);
+                document.Pages.Add(pageContent);
+            }
+
+            return document;
+        }
+
         private async Task PromptSaveAsForDraftAsync()
         {
             if (_hasPromptedForSaveAs || string.IsNullOrWhiteSpace(_currentPdfPath))
@@ -3424,13 +3637,8 @@ namespace Caelum.Pages
 
         private void SelectTextBox(TextBox textBox, bool focusTextBox = true, bool refreshPopupPlacement = false)
         {
-            if (textBox == null)
+            if (textBox == null || _currentTool != ToolType.Text)
                 return;
-
-            // Auto-switch to Text tool when clicking on an existing textbox,
-            // regardless of the currently active tool.
-            if (_currentTool != ToolType.Text)
-                ActivateTool(ToolType.Text);
 
             bool selectionChanged = !ReferenceEquals(_selectedTextBox, textBox);
 
@@ -3448,6 +3656,12 @@ namespace Caelum.Pages
 
             if (focusTextBox && !textBox.IsKeyboardFocusWithin)
                 textBox.Focus();
+        }
+
+        private void SuppressTextAnnotationStylusInteraction(object sender, StylusDownEventArgs e)
+        {
+            Keyboard.Focus(PdfScrollViewer);
+            e.Handled = true;
         }
 
 
@@ -3764,6 +3978,7 @@ namespace Caelum.Pages
             dragHandle.MouseLeftButtonDown += DragHandle_MouseLeftButtonDown;
             dragHandle.MouseMove += DragHandle_MouseMove;
             dragHandle.MouseLeftButtonUp += DragHandle_MouseLeftButtonUp;
+            dragHandle.PreviewStylusDown += SuppressTextAnnotationStylusInteraction;
 
             textBox.TextChanged += (s, e) => MarkDirty();
             textBox.PreviewMouseLeftButtonDown += (s, e) =>
@@ -3772,6 +3987,7 @@ namespace Caelum.Pages
                 // We only switch selection/read-only state before WPF handles the click.
                 SelectTextBox((TextBox)s, focusTextBox: false);
             };
+            textBox.PreviewStylusDown += SuppressTextAnnotationStylusInteraction;
             textBox.GotFocus += (s, e) =>
             {
                 SelectTextBox((TextBox)s);

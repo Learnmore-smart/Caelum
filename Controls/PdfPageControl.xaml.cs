@@ -793,11 +793,10 @@ namespace Caelum.Controls
 
         public void SetMode(bool isTextMode)
         {
-            // Keep hit testing enabled so existing textboxes remain selectable in any mode.
-            TextOverlayCanvas.IsHitTestVisible = true;
-
-            // In text mode, capture clicks on empty overlay space so EditorPage can create new textboxes.
-            // In other modes, clear the canvas background so empty-area clicks pass through to InkCanvas.
+            // Text annotations should only be directly interactive while the text
+            // tool is active. In every other mode, let the input fall through to
+            // the drawing/selection layers underneath.
+            TextOverlayCanvas.IsHitTestVisible = isTextMode;
             TextOverlayCanvas.Background = isTextMode ? Brushes.Transparent : null;
         }
 

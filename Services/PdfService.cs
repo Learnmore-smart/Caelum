@@ -816,9 +816,6 @@ namespace Caelum.Services
             try
             {
                 // Read the entire PDF into memory first to avoid file locking issues
-<<<<<<< HEAD
-                byte[] pdfBytes = File.ReadAllBytes(filePath);
-=======
                 byte[] pdfBytes;
                 using (var sourceStream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read))
                 {
@@ -829,7 +826,6 @@ namespace Caelum.Services
                         throw new IOException($"Failed to read complete PDF file. Expected {sourceStream.Length} bytes, but read {bytesRead} bytes.");
                     }
                 }
->>>>>>> 67232efc56a824e22b931276e6a255d8024ac90d
 
                 // Use a memory stream for PDF operations to avoid file system issues
                 using (var memoryStream = new MemoryStream(pdfBytes))
@@ -914,25 +910,13 @@ namespace Caelum.Services
                             apStream.AppendLine("ET");
                             apStream.AppendLine("Q");
 
-                            byte[] streamBytes = System.Text.Encoding.Latin1.GetBytes(apStream.ToString());
-                            var apNormal = new PdfDictionary(document);
-                            apNormal.Elements.SetName("/Type", "/XObject");
-                            apNormal.Elements.SetName("/Subtype", "/Form");
-                            apNormal.Elements.SetInteger("/FormType", 1);
-                            // BBox in form coordinates: origin bottom-left, y goes up
-                            var bboxArray = new PdfArray();
-                            bboxArray.Elements.Add(new PdfReal(0));
-                            bboxArray.Elements.Add(new PdfReal(0));
-                            bboxArray.Elements.Add(new PdfReal(w));
-                            bboxArray.Elements.Add(new PdfReal(h));
-                            apNormal.Elements["/BBox"] = bboxArray;
-                            // Embed the stream bytes
-                            apNormal.CreateStream(streamBytes);
-                            document.Internals.AddObject(apNormal);
-
-                            var apDict = new PdfDictionary(document);
-                            apDict.Elements["/N"] = apNormal.Reference;
-                            annot.Elements["/AP"] = apDict;
+                            var apNormal = CreateAppearanceStream(
+                                document,
+                                w,
+                                h,
+                                apStream.ToString(),
+                                CreateStandardFontResources(document));
+                            annot.Elements["/AP"] = CreateAppearanceDictionary(document, apNormal);
 
                             AddAnnotationToPage(pdfPage, annot);
                         }
@@ -943,8 +927,8 @@ namespace Caelum.Services
 
                             var dict = new PdfDictionary(document);
                             dict.Elements.SetName(PdfAnnotation.Keys.Subtype, "/Ink");
-                            dict.Elements.SetRectangle(PdfAnnotation.Keys.Rect, new PdfSharpPdfRectangle(new XRect(0, 0, pdfPage.Width, pdfPage.Height)));
                             dict.Elements.SetString("/NM", $"wna_ink_{Guid.NewGuid()}");
+                            dict.Elements.SetInteger("/F", 4);
 
                             var colorArray = new PdfArray();
                             colorArray.Elements.Add(new PdfReal(stroke.R / 255.0));
@@ -952,23 +936,69 @@ namespace Caelum.Services
                             colorArray.Elements.Add(new PdfReal(stroke.B / 255.0));
                             dict.Elements.Add("/C", colorArray);
 
-                            if (stroke.A < 255 || stroke.IsHighlighter)
-                                dict.Elements.SetReal("/CA", stroke.IsHighlighter ? 0.5 : stroke.A / 255.0);
+                            double opacity = stroke.IsHighlighter ? 0.5 : stroke.A / 255.0;
+                            if (opacity < 1.0)
+                                dict.Elements.SetReal("/CA", opacity);
 
+                            double strokeWidth = Math.Max(stroke.Size * scale, 0.5);
                             var bsDict = new PdfDictionary();
                             bsDict.Elements.SetName("/Type", "/Border");
-                            bsDict.Elements.SetReal("/W", stroke.Size * scale);
+                            bsDict.Elements.SetReal("/W", strokeWidth);
                             dict.Elements.Add("/BS", bsDict);
 
+                            var pdfPoints = new List<Point>(stroke.Points.Count);
                             var inkListArray = new PdfArray();
                             var pointArray = new PdfArray();
                             foreach (var pt in stroke.Points)
                             {
-                                pointArray.Elements.Add(new PdfReal(pt[0] * scale));
-                                pointArray.Elements.Add(new PdfReal(pageHeight - (pt[1] * scale)));
+                                double pdfX = pt[0] * scale;
+                                double pdfY = pageHeight - (pt[1] * scale);
+                                pointArray.Elements.Add(new PdfReal(pdfX));
+                                pointArray.Elements.Add(new PdfReal(pdfY));
+                                pdfPoints.Add(new Point(pdfX, pdfY));
                             }
                             inkListArray.Elements.Add(pointArray);
                             dict.Elements.Add("/InkList", inkListArray);
+
+                            if (pdfPoints.Count == 1)
+                                pdfPoints.Add(new Point(pdfPoints[0].X + strokeWidth, pdfPoints[0].Y));
+
+                            double padding = Math.Max(strokeWidth, 1.0);
+                            double minX = Math.Max(0, pdfPoints.Min(point => point.X) - padding);
+                            double maxX = Math.Min(pdfPage.Width.Point, pdfPoints.Max(point => point.X) + padding);
+                            double minY = Math.Max(0, pdfPoints.Min(point => point.Y) - padding);
+                            double maxY = Math.Min(pdfPage.Height.Point, pdfPoints.Max(point => point.Y) + padding);
+                            double appearanceWidth = Math.Max(1.0, maxX - minX);
+                            double appearanceHeight = Math.Max(1.0, maxY - minY);
+
+                            dict.Elements.SetRectangle(
+                                PdfAnnotation.Keys.Rect,
+                                new PdfSharpPdfRectangle(new XRect(minX, minY, appearanceWidth, appearanceHeight)));
+
+                            var appearanceStream = new StringBuilder();
+                            appearanceStream.AppendLine("q");
+                            if (opacity < 1.0)
+                                appearanceStream.AppendLine("/GS1 gs");
+                            appearanceStream.AppendLine($"{stroke.R / 255.0:F3} {stroke.G / 255.0:F3} {stroke.B / 255.0:F3} RG");
+                            appearanceStream.AppendLine($"{strokeWidth:F2} w");
+                            appearanceStream.AppendLine("1 J");
+                            appearanceStream.AppendLine("1 j");
+                            appearanceStream.AppendLine($"{pdfPoints[0].X - minX:F2} {pdfPoints[0].Y - minY:F2} m");
+                            for (int pointIndex = 1; pointIndex < pdfPoints.Count; pointIndex++)
+                            {
+                                var point = pdfPoints[pointIndex];
+                                appearanceStream.AppendLine($"{point.X - minX:F2} {point.Y - minY:F2} l");
+                            }
+                            appearanceStream.AppendLine("S");
+                            appearanceStream.AppendLine("Q");
+
+                            var appearance = CreateAppearanceStream(
+                                document,
+                                appearanceWidth,
+                                appearanceHeight,
+                                appearanceStream.ToString(),
+                                CreateAppearanceResources(document, opacity, stroke.IsHighlighter));
+                            dict.Elements["/AP"] = CreateAppearanceDictionary(document, appearance);
 
                             AddAnnotationToPage(pdfPage, dict);
                         }
@@ -979,10 +1009,13 @@ namespace Caelum.Services
 
                             var dict = new PdfDictionary(document);
                             dict.Elements.SetName(PdfAnnotation.Keys.Subtype, "/Highlight");
+                            dict.Elements.SetString("/NM", $"wna_hl_{Guid.NewGuid()}");
+                            dict.Elements.SetInteger("/F", 4);
 
                             double minX = double.MaxValue, minY = double.MaxValue;
                             double maxX = double.MinValue, maxY = double.MinValue;
                             var quadPoints = new PdfArray();
+                            var appearanceRects = new List<XRect>(highlight.Rects.Count);
 
                             foreach (var rectInfo in highlight.Rects)
                             {
@@ -991,15 +1024,16 @@ namespace Caelum.Services
                                 double w_ui = rectInfo[2];
                                 double h_ui = rectInfo[3];
 
-                                double x1 = x_ui / scale;
-                                double y1 = pageHeight - (y_ui / scale); // Top Y in PDF coords
-                                double x2 = (x_ui + w_ui) / scale;
-                                double y2 = pageHeight - ((y_ui + h_ui) / scale); // Bottom Y in PDF coords
+                                double x1 = x_ui * scale;
+                                double y1 = pageHeight - (y_ui * scale); // Top Y in PDF coords
+                                double x2 = (x_ui + w_ui) * scale;
+                                double y2 = pageHeight - ((y_ui + h_ui) * scale); // Bottom Y in PDF coords
 
                                 minX = Math.Min(minX, Math.Min(x1, x2));
                                 minY = Math.Min(minY, Math.Min(y1, y2));
                                 maxX = Math.Max(maxX, Math.Max(x1, x2));
                                 maxY = Math.Max(maxY, Math.Max(y1, y2));
+                                appearanceRects.Add(new XRect(Math.Min(x1, x2), Math.Min(y1, y2), Math.Abs(x2 - x1), Math.Abs(y1 - y2)));
 
                                 // QuadPoints: [TL.X, TL.Y, TR.X, TR.Y, BL.X, BL.Y, BR.X, BR.Y]
                                 quadPoints.Elements.Add(new PdfReal(x1));
@@ -1014,7 +1048,6 @@ namespace Caelum.Services
 
                             dict.Elements.SetRectangle(PdfAnnotation.Keys.Rect, new PdfSharpPdfRectangle(new XRect(minX, minY, maxX - minX, maxY - minY)));
                             dict.Elements.Add("/QuadPoints", quadPoints);
-                            dict.Elements.SetString("/NM", $"wna_hl_{Guid.NewGuid()}");
 
                             var colorArray = new PdfArray();
                             colorArray.Elements.Add(new PdfReal(highlight.R / 255.0));
@@ -1022,8 +1055,28 @@ namespace Caelum.Services
                             colorArray.Elements.Add(new PdfReal(highlight.B / 255.0));
                             dict.Elements.Add("/C", colorArray);
 
-                            if (highlight.A < 255)
-                                dict.Elements.SetReal("/CA", highlight.A / 255.0);
+                            double opacity = highlight.A / 255.0;
+                            if (opacity < 1.0)
+                                dict.Elements.SetReal("/CA", opacity);
+
+                            var appearanceStream = new StringBuilder();
+                            appearanceStream.AppendLine("q");
+                            appearanceStream.AppendLine("/GS1 gs");
+                            appearanceStream.AppendLine($"{highlight.R / 255.0:F3} {highlight.G / 255.0:F3} {highlight.B / 255.0:F3} rg");
+                            foreach (var rect in appearanceRects)
+                            {
+                                appearanceStream.AppendLine($"{rect.X - minX:F2} {rect.Y - minY:F2} {rect.Width:F2} {rect.Height:F2} re");
+                                appearanceStream.AppendLine("f");
+                            }
+                            appearanceStream.AppendLine("Q");
+
+                            var appearance = CreateAppearanceStream(
+                                document,
+                                Math.Max(1.0, maxX - minX),
+                                Math.Max(1.0, maxY - minY),
+                                appearanceStream.ToString(),
+                                CreateAppearanceResources(document, opacity, true));
+                            dict.Elements["/AP"] = CreateAppearanceDictionary(document, appearance);
 
                             AddAnnotationToPage(pdfPage, dict);
                         }
@@ -1065,6 +1118,12 @@ namespace Caelum.Services
 
         private void AddAnnotationToPage(PdfSharpCore.Pdf.PdfPage page, PdfDictionary annotation)
         {
+            if (!annotation.Elements.ContainsKey("/Type"))
+                annotation.Elements.SetName("/Type", "/Annot");
+            if (!annotation.Elements.ContainsKey("/F"))
+                annotation.Elements.SetInteger("/F", 4);
+            if (!annotation.Elements.ContainsKey("/P") && page.Reference != null)
+                annotation.Elements["/P"] = page.Reference;
             // Register as an indirect object (PDF spec §12.3.3 requires annotations to be indirect
             // objects referenced by N 0 R). Inline annotation dicts can confuse strict viewers like Edge.
             if (annotation.Reference == null)
@@ -1077,6 +1136,78 @@ namespace Caelum.Services
                 page.Elements.Add("/Annots", annots);
             }
             annots.Elements.Add(annotation.Reference);
+        }
+
+        private static PdfDictionary CreateAppearanceDictionary(PdfSharpCore.Pdf.PdfDocument document, PdfDictionary normalAppearance)
+        {
+            var appearanceDictionary = new PdfDictionary(document);
+            appearanceDictionary.Elements["/N"] = normalAppearance.Reference;
+            return appearanceDictionary;
+        }
+
+        private static PdfDictionary CreateStandardFontResources(PdfSharpCore.Pdf.PdfDocument document)
+        {
+            var font = new PdfDictionary(document);
+            font.Elements.SetName("/Type", "/Font");
+            font.Elements.SetName("/Subtype", "/Type1");
+            font.Elements.SetName("/BaseFont", "/Helvetica");
+            font.Elements.SetName("/Encoding", "/WinAnsiEncoding");
+            document.Internals.AddObject(font);
+
+            var fonts = new PdfDictionary(document);
+            fonts.Elements["/Helv"] = font.Reference;
+
+            var resources = new PdfDictionary(document);
+            resources.Elements["/Font"] = fonts;
+            return resources;
+        }
+
+        private static PdfDictionary CreateAppearanceResources(PdfSharpCore.Pdf.PdfDocument document, double opacity, bool useMultiplyBlend)
+        {
+            if (opacity >= 0.999 && !useMultiplyBlend)
+                return null;
+
+            var graphicsState = new PdfDictionary(document);
+            graphicsState.Elements.SetName("/Type", "/ExtGState");
+            graphicsState.Elements.SetReal("/CA", opacity);
+            graphicsState.Elements.SetReal("/ca", opacity);
+            if (useMultiplyBlend)
+                graphicsState.Elements.SetName("/BM", "/Multiply");
+            document.Internals.AddObject(graphicsState);
+
+            var extGState = new PdfDictionary(document);
+            extGState.Elements["/GS1"] = graphicsState.Reference;
+
+            var resources = new PdfDictionary(document);
+            resources.Elements["/ExtGState"] = extGState;
+            return resources;
+        }
+
+        private static PdfDictionary CreateAppearanceStream(
+            PdfSharpCore.Pdf.PdfDocument document,
+            double width,
+            double height,
+            string contentStream,
+            PdfDictionary resources)
+        {
+            var appearanceStream = new PdfDictionary(document);
+            appearanceStream.Elements.SetName("/Type", "/XObject");
+            appearanceStream.Elements.SetName("/Subtype", "/Form");
+            appearanceStream.Elements.SetInteger("/FormType", 1);
+
+            var bbox = new PdfArray(document);
+            bbox.Elements.Add(new PdfReal(0));
+            bbox.Elements.Add(new PdfReal(0));
+            bbox.Elements.Add(new PdfReal(width));
+            bbox.Elements.Add(new PdfReal(height));
+            appearanceStream.Elements["/BBox"] = bbox;
+
+            if (resources != null)
+                appearanceStream.Elements["/Resources"] = resources;
+
+            appearanceStream.CreateStream(Encoding.Latin1.GetBytes(contentStream));
+            document.Internals.AddObject(appearanceStream);
+            return appearanceStream;
         }
 
         internal static Models.TextAnnotation TryExtractFreeTextAnnotation(PdfDictionary dict, double pageHeight, double scale)

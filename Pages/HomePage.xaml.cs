@@ -16,8 +16,6 @@ namespace Caelum.Pages
 {
     public sealed partial class HomePage : Page
     {
-        private const string LibraryTilePathDataFormat = "Caelum.LibraryTilePath";
-
         private enum HomeSortMode
         {
             Date,
@@ -33,6 +31,7 @@ namespace Caelum.Pages
         private HomeSortMode _currentSortMode = HomeSortMode.Date;
         private Point _dragStartPoint;
         private HomeTile _dragCandidateTile;
+        private string[] _dragCandidatePaths = Array.Empty<string>();
 
         public bool IsSelectionMode { get; private set; }
 
@@ -764,22 +763,28 @@ namespace Caelum.Pages
 
         public bool ShouldDeferWindowFileDrop(DependencyObject originalSource, IDataObject data)
         {
-            return data != null &&
-                   data.GetDataPresent(DataFormats.FileDrop) &&
-                   GetFolderTileFromSource(originalSource) != null;
+            return GetFolderTileFromSource(originalSource) != null &&
+                   HomePageDragDropHelper.HasSupportedFolderDropPayload(data);
         }
 
         private void FileTile_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
         {
-            if (IsSelectionMode)
+            if (sender is not FrameworkElement element || element.Tag is not HomeTile tile || !tile.IsFile)
             {
-                _dragCandidateTile = null;
+                ClearDragCandidate();
                 return;
             }
 
-            if (sender is not FrameworkElement element || element.Tag is not HomeTile tile || !tile.IsFile)
+            if (IsSelectionMode && !tile.IsSelected)
             {
-                _dragCandidateTile = null;
+                ClearDragCandidate();
+                return;
+            }
+
+            _dragCandidatePaths = GetDragCandidatePaths(tile);
+            if (_dragCandidatePaths.Length == 0)
+            {
+                ClearDragCandidate();
                 return;
             }
 
@@ -789,7 +794,7 @@ namespace Caelum.Pages
 
         private void FileTile_MouseMove(object sender, MouseEventArgs e)
         {
-            if (_dragCandidateTile == null || e.LeftButton != MouseButtonState.Pressed)
+            if (_dragCandidateTile == null || _dragCandidatePaths.Length == 0 || e.LeftButton != MouseButtonState.Pressed)
                 return;
 
             var currentPosition = e.GetPosition(this);
@@ -797,9 +802,19 @@ namespace Caelum.Pages
                 Math.Abs(currentPosition.Y - _dragStartPoint.Y) < SystemParameters.MinimumVerticalDragDistance)
                 return;
 
-            var dataObject = new DataObject(LibraryTilePathDataFormat, _dragCandidateTile.Path);
-            DragDrop.DoDragDrop((DependencyObject)sender, dataObject, DragDropEffects.Move);
-            _dragCandidateTile = null;
+            var dataObject = new DataObject();
+            dataObject.SetData(HomePageDragDropHelper.LibraryTilePathsDataFormat, _dragCandidatePaths);
+            if (_dragCandidatePaths.Length == 1)
+                dataObject.SetData(HomePageDragDropHelper.LibraryTilePathDataFormat, _dragCandidatePaths[0]);
+
+            try
+            {
+                DragDrop.DoDragDrop((DependencyObject)sender, dataObject, DragDropEffects.Move);
+            }
+            finally
+            {
+                ClearDragCandidate();
+            }
         }
 
         private void FolderTile_DragEnter(object sender, DragEventArgs e)
@@ -826,16 +841,15 @@ namespace Caelum.Pages
             tile.IsDropTarget = false;
             var movedAny = false;
 
-            if (e.Data.GetDataPresent(LibraryTilePathDataFormat))
+            var libraryTilePaths = HomePageDragDropHelper.GetLibraryTilePaths(e.Data);
+            if (libraryTilePaths.Length > 0)
             {
-                var filePath = e.Data.GetData(LibraryTilePathDataFormat) as string;
-                if (!string.IsNullOrWhiteSpace(filePath))
-                    movedAny = RecentFilesService.MoveToFolder(filePath, tile.Id);
+                foreach (var filePath in libraryTilePaths)
+                    movedAny = RecentFilesService.MoveToFolder(filePath, tile.Id) || movedAny;
             }
-            else if (e.Data.GetDataPresent(DataFormats.FileDrop) &&
-                     e.Data.GetData(DataFormats.FileDrop) is string[] files)
+            else
             {
-                foreach (var file in files.Where(IsPdfFile))
+                foreach (var file in HomePageDragDropHelper.GetDroppedPdfPaths(e.Data))
                 {
                     RecentFilesService.AddOrPromote(
                         file,
@@ -861,14 +875,34 @@ namespace Caelum.Pages
             if (sender is not FrameworkElement element || element.Tag is not HomeTile tile || !tile.IsFolder)
                 return;
 
-            var canAcceptDrop = e.Data.GetDataPresent(LibraryTilePathDataFormat) ||
-                                (e.Data.GetDataPresent(DataFormats.FileDrop) &&
-                                 e.Data.GetData(DataFormats.FileDrop) is string[] files &&
-                                 files.Any(IsPdfFile));
+            var canAcceptDrop = HomePageDragDropHelper.HasSupportedFolderDropPayload(e.Data);
 
             tile.IsDropTarget = isActive && canAcceptDrop;
             e.Effects = canAcceptDrop ? DragDropEffects.Move : DragDropEffects.None;
             e.Handled = true;
+        }
+
+        private string[] GetDragCandidatePaths(HomeTile tile)
+        {
+            if (tile == null || !tile.IsFile)
+                return Array.Empty<string>();
+
+            if (!IsSelectionMode)
+                return string.IsNullOrWhiteSpace(tile.Path)
+                    ? Array.Empty<string>()
+                    : new[] { tile.Path };
+
+            return HomeTiles
+                .Where(candidate => candidate.IsFile && candidate.IsSelected && !string.IsNullOrWhiteSpace(candidate.Path))
+                .Select(candidate => candidate.Path)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+        }
+
+        private void ClearDragCandidate()
+        {
+            _dragCandidateTile = null;
+            _dragCandidatePaths = Array.Empty<string>();
         }
 
         private HomeTile GetFolderTileFromSource(DependencyObject source)
