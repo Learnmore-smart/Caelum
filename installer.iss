@@ -2,11 +2,24 @@
 ; This creates a proper Windows installer with Start Menu shortcuts,
 ; Program Files installation, and an uninstaller.
 
-#define MyAppName "Caelum"
-#define MyAppVersion "3.0.3"
-#define MyAppPublisher "Learnmore_smart"
-#define MyAppURL "https://github.com/Learnmore-smart/Caelum"
-#define MyAppExeName "Caelum.exe"
+#ifndef MyAppName
+  #define MyAppName "Caelum"
+#endif
+#ifndef MyAppVersion
+  #define MyAppVersion "3.0.3"
+#endif
+#ifndef MyAppPublisher
+  #define MyAppPublisher "Learnmore_smart"
+#endif
+#ifndef MyAppURL
+  #define MyAppURL "https://github.com/Learnmore-smart/Caelum"
+#endif
+#ifndef MyAppExeName
+  #define MyAppExeName "Caelum.exe"
+#endif
+#ifndef MyAppOutputBaseFilename
+  #define MyAppOutputBaseFilename "Caelum-Setup-{#MyAppVersion}"
+#endif
 
 [Setup]
 AppId={{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}
@@ -21,7 +34,7 @@ DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 LicenseFile=LICENSE
 OutputDir=installer_output
-OutputBaseFilename=Caelum-Setup
+OutputBaseFilename={#MyAppOutputBaseFilename}
 SetupIconFile=Assets\app-icon.ico
 Compression=lzma2/ultra64
 SolidCompression=yes

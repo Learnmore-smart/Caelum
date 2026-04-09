@@ -61,6 +61,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Compile Remove="test_annotation_save.cs" />
+    <Compile Remove="test_fix.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
     <Content Include="Assets\app-icon.ico">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>

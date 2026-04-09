@@ -48,7 +48,7 @@ namespace Caelum.Pages
                    GetDroppedPdfPaths(data).Length > 0;
         }
 
-        private static string[] NormalizePaths(string[] paths)
+        private static string[] NormalizePaths(System.Collections.Generic.IEnumerable<string> paths)
         {
             return (paths ?? Array.Empty<string>())
                 .Where(path => !string.IsNullOrWhiteSpace(path))

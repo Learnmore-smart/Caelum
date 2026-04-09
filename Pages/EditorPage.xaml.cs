@@ -1947,68 +1947,6 @@ namespace Caelum.Pages
             }
         }
 
-        private bool PasteSelection()
-        {
-            if (!System.Windows.Clipboard.ContainsText())
-                return false;
-
-            var json = System.Windows.Clipboard.GetText();
-            if (string.IsNullOrEmpty(json))
-                return false;
-
-            AnnotationData annotationData;
-            PageAnnotation pageAnnotation;
-            try
-            {
-                annotationData = System.Text.Json.JsonSerializer.Deserialize<AnnotationData>(json);
-                if (annotationData == null || !annotationData.Pages.TryGetValue("0", out pageAnnotation))
-                    return false;
-            }
-            catch
-            {
-                return false;
-            }
-
-            var page = GetFirstVisiblePage();
-            if (page == null)
-                return false;
-
-            double offsetX = 20;
-            double offsetY = 20;
-
-            foreach (var strokeAnnotation in pageAnnotation.Strokes)
-            {
-                var points = new StylusPointCollection();
-                foreach (var pt in strokeAnnotation.Points)
-                {
-                    if (pt.Length >= 2)
-                        points.Add(new StylusPoint(pt[0] + offsetX, pt[1] + offsetY));
-                }
-
-                var stroke = new Stroke(points)
-                {
-                    DrawingAttributes = new DrawingAttributes
-                    {
-                        Color = Color.FromArgb(strokeAnnotation.A, strokeAnnotation.R, strokeAnnotation.G, strokeAnnotation.B),
-                        Width = strokeAnnotation.Size,
-                        Height = strokeAnnotation.Size,
-                        FitToCurve = true
-                    }
-                };
-                page.AddStrokeQuiet(stroke);
-            }
-
-            foreach (var textAnnotation in pageAnnotation.Texts)
-            {
-                var position = new Point(textAnnotation.X + offsetX, textAnnotation.Y + offsetY);
-                var color = Color.FromRgb(textAnnotation.R, textAnnotation.G, textAnnotation.B);
-                CreateTextBox(page, position, color, textAnnotation.FontSize, textAnnotation.Text, select: false);
-            }
-
-            MarkDirty();
-            return true;
-        }
-
         private PdfPageControl GetFirstVisiblePage()
         {
             foreach (var page in _pageControls)
@@ -3046,7 +2984,7 @@ namespace Caelum.Pages
                     throw new InvalidOperationException("The document has no pages to print.");
 
                 var printDocument = CreatePrintDocument(pages, dialog);
-                dialog.PrintDocument(printDocument.DocumentPaginator, Path.GetFileName(_currentPdfPath));
+                dialog.PrintDocument(printDocument.DocumentPaginator, System.IO.Path.GetFileName(_currentPdfPath));
                 GetMainWindow()?.ShowToast("Print job sent", "\uE749", 1500);
             }
             catch (Exception ex)
@@ -3073,9 +3011,9 @@ namespace Caelum.Pages
                 string renderPath = _currentPdfPath;
                 if (includeAnnotations)
                 {
-                    string tempDirectory = Path.Combine(Path.GetTempPath(), "Caelum", "Print");
+                    string tempDirectory = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "Caelum", "Print");
                     Directory.CreateDirectory(tempDirectory);
-                    tempPrintPath = Path.Combine(tempDirectory, $"{Guid.NewGuid():N}.pdf");
+                    tempPrintPath = System.IO.Path.Combine(tempDirectory, $"{Guid.NewGuid():N}.pdf");
                     File.Copy(_currentPdfPath, tempPrintPath, true);
                     await _pdfService.SaveAnnotationsToPdfAsync(tempPrintPath, CollectAnnotations());
                     renderPath = tempPrintPath;
