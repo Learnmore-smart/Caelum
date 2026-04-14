@@ -41,6 +41,9 @@ namespace Caelum.Pages
             DataContext = this;
             ApplyLocalization();
             Loaded += HomePage_Loaded;
+            DragOver += HomePage_DragOver;
+            Drop += HomePage_Drop;
+            DragLeave += HomePage_DragLeave;
         }
 
         public bool IsInsideFolder => !string.IsNullOrWhiteSpace(_currentFolderId);
@@ -763,8 +766,7 @@ namespace Caelum.Pages
 
         public bool ShouldDeferWindowFileDrop(DependencyObject originalSource, IDataObject data)
         {
-            return GetFolderTileFromSource(originalSource) != null &&
-                   HomePageDragDropHelper.HasSupportedFolderDropPayload(data);
+            return HomePageDragDropHelper.HasSupportedFolderDropPayload(data);
         }
 
         private void FileTile_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
@@ -903,6 +905,73 @@ namespace Caelum.Pages
         {
             _dragCandidateTile = null;
             _dragCandidatePaths = Array.Empty<string>();
+        }
+
+        private void HomePage_DragOver(object sender, DragEventArgs e)
+        {
+            if (GetFolderTileFromSource(e.OriginalSource as DependencyObject) != null)
+            {
+                DragDropOverlay.Visibility = Visibility.Collapsed;
+                return;
+            }
+
+            var pdfPaths = HomePageDragDropHelper.GetDroppedPdfPaths(e.Data);
+            var libraryPaths = HomePageDragDropHelper.GetLibraryTilePaths(e.Data);
+            if (pdfPaths.Length > 0 || libraryPaths.Length > 0)
+            {
+                e.Effects = libraryPaths.Length > 0 ? DragDropEffects.Move : DragDropEffects.Copy;
+                DragDropOverlay.Visibility = Visibility.Visible;
+                e.Handled = true;
+            }
+            else
+            {
+                DragDropOverlay.Visibility = Visibility.Collapsed;
+            }
+        }
+
+        private void HomePage_DragLeave(object sender, DragEventArgs e)
+        {
+            DragDropOverlay.Visibility = Visibility.Collapsed;
+        }
+
+        private async void HomePage_Drop(object sender, DragEventArgs e)
+        {
+            DragDropOverlay.Visibility = Visibility.Collapsed;
+
+            if (GetFolderTileFromSource(e.OriginalSource as DependencyObject) != null)
+                return;
+
+            var libraryPaths = HomePageDragDropHelper.GetLibraryTilePaths(e.Data);
+            var pdfPaths = HomePageDragDropHelper.GetDroppedPdfPaths(e.Data);
+            bool movedAny = false;
+
+            if (libraryPaths.Length > 0 && IsInsideFolder)
+            {
+                foreach (var filePath in libraryPaths)
+                    movedAny = RecentFilesService.MoveToFolder(filePath, _currentFolderId) || movedAny;
+            }
+            else if (pdfPaths.Length > 0)
+            {
+                foreach (var file in pdfPaths)
+                {
+                    RecentFilesService.AddOrPromote(
+                        file,
+                        null,
+                        File.Exists(file) ? File.GetLastWriteTimeUtc(file) : null,
+                        IsInsideFolder ? _currentFolderId : null,
+                        false);
+                    movedAny = true;
+                }
+            }
+
+            if (movedAny)
+            {
+                await RefreshCurrentFolderAsync();
+                var targetName = IsInsideFolder ? _currentFolderName : LocalizationService.Get("Home.LibraryRoot");
+                GetMainWindow()?.ShowToast(LocalizationService.Format("Home.MovedToFolder", targetName), "\uE8B7");
+            }
+
+            e.Handled = true;
         }
 
         private HomeTile GetFolderTileFromSource(DependencyObject source)

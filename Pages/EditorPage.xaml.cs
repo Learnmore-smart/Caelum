@@ -51,8 +51,9 @@ namespace Caelum.Pages
         private bool _isNotebookDraft;
 
         private TextBox _selectedTextBox;
-        private Popup _textBoxPopup;
         private Border _colorIndicator;
+        private Border _inlineTextBoxToolbar;
+        private PdfPageControl _toolbarHostPage;
         private static readonly double[] TextFontSizeSteps = { 12d, 14d, 16d, 18d, 20d, 24d, 28d, 32d, 40d, 48d, 60d, 72d };
 
         private Popup _penPopup;
@@ -132,6 +133,87 @@ namespace Caelum.Pages
             public Task RedoAsync()
             {
                 _page.MoveItemsDirectly(_strokes, _containers, _deltaX, _deltaY);
+                return Task.CompletedTask;
+            }
+        }
+
+        private class SelectionCrossPageMoveAction : IUndoAction
+        {
+            private readonly PdfPageControl _sourcePage;
+            private readonly PdfPageControl _targetPage;
+            private readonly double _deltaX;
+            private readonly double _deltaY;
+            private readonly double _adjustX;
+            private readonly double _adjustY;
+            private readonly List<System.Windows.Ink.Stroke> _strokes;
+            private readonly List<System.Windows.Controls.Grid> _containers;
+
+            public SelectionCrossPageMoveAction(PdfPageControl sourcePage, PdfPageControl targetPage,
+                double deltaX, double deltaY, double adjustX, double adjustY,
+                List<System.Windows.Ink.Stroke> strokes, List<System.Windows.Controls.Grid> containers)
+            {
+                _sourcePage = sourcePage;
+                _targetPage = targetPage;
+                _deltaX = deltaX;
+                _deltaY = deltaY;
+                _adjustX = adjustX;
+                _adjustY = adjustY;
+                _strokes = strokes;
+                _containers = containers;
+            }
+
+            public bool LeavesDocumentDirty => true;
+
+            public void ExecuteInitialTransfer()
+            {
+                foreach (var stroke in _strokes)
+                {
+                    _sourcePage.RemoveStrokeQuiet(stroke);
+                    _targetPage.AddStrokeQuiet(stroke);
+                }
+
+                foreach (var container in _containers)
+                {
+                    _sourcePage.RemoveTextContainerQuiet(container);
+                    _targetPage.AddTextContainerQuiet(container);
+                }
+
+                _targetPage.MoveItemsDirectly(_strokes, _containers, _adjustX, _adjustY);
+            }
+
+            public Task UndoAsync()
+            {
+                foreach (var stroke in _strokes)
+                {
+                    _targetPage.RemoveStrokeQuiet(stroke);
+                    _sourcePage.AddStrokeQuiet(stroke);
+                }
+
+                foreach (var container in _containers)
+                {
+                    _targetPage.RemoveTextContainerQuiet(container);
+                    _sourcePage.AddTextContainerQuiet(container);
+                }
+
+                _sourcePage.MoveItemsDirectly(_strokes, _containers, -_deltaX - _adjustX, -_deltaY - _adjustY);
+                return Task.CompletedTask;
+            }
+
+            public Task RedoAsync()
+            {
+                foreach (var stroke in _strokes)
+                {
+                    _sourcePage.RemoveStrokeQuiet(stroke);
+                    _targetPage.AddStrokeQuiet(stroke);
+                }
+
+                foreach (var container in _containers)
+                {
+                    _sourcePage.RemoveTextContainerQuiet(container);
+                    _targetPage.AddTextContainerQuiet(container);
+                }
+
+                _targetPage.MoveItemsDirectly(_strokes, _containers, _deltaX + _adjustX, _deltaY + _adjustY);
                 return Task.CompletedTask;
             }
         }
@@ -270,7 +352,6 @@ namespace Caelum.Pages
             _pdfService = new PdfService();
             ActivateTool(ToolType.None);
 
-            FixPopupTopmost(_textBoxPopup);
             FixPopupTopmost(_penPopup);
             FixPopupTopmost(_highlighterPopup);
             FixPopupTopmost(_eraserPopup);
@@ -2771,8 +2852,52 @@ namespace Caelum.Pages
         private void PageControl_SelectionMoveCompleted(object sender, SelectionMoveCompletedEventArgs e)
         {
             if (sender is not PdfPageControl page) return;
-            var action = new SelectionMoveAction(page, e.DeltaX, e.DeltaY, e.SelectedStrokes, e.SelectedTextContainers);
-            PushUndoAction(action);
+
+            Rect bounds = page.GetSelectionBounds();
+            if (bounds.IsEmpty)
+            {
+                var action = new SelectionMoveAction(page, e.DeltaX, e.DeltaY, e.SelectedStrokes, e.SelectedTextContainers);
+                PushUndoAction(action);
+                return;
+            }
+
+            Point centerInPage = new Point(bounds.X + bounds.Width / 2, bounds.Y + bounds.Height / 2);
+            Point centerInContainer = page.TranslatePoint(centerInPage, PagesContainer);
+
+            PdfPageControl targetPage = null;
+            foreach (var p in _pageControls)
+            {
+                Point ptInPage = PagesContainer.TranslatePoint(centerInContainer, p);
+                if (ptInPage.X >= 0 && ptInPage.X <= p.ActualWidth &&
+                    ptInPage.Y >= 0 && ptInPage.Y <= p.ActualHeight)
+                {
+                    targetPage = p;
+                    break;
+                }
+            }
+
+            if (targetPage != null && targetPage != page)
+            {
+                Point targetOriginInPage = targetPage.TranslatePoint(new Point(0, 0), page);
+                double adjustX = -targetOriginInPage.X;
+                double adjustY = -targetOriginInPage.Y;
+
+                page.ClearSelection();
+
+                var moveAction = new SelectionCrossPageMoveAction(
+                    page, targetPage,
+                    e.DeltaX, e.DeltaY,
+                    adjustX, adjustY,
+                    e.SelectedStrokes, e.SelectedTextContainers);
+
+                moveAction.ExecuteInitialTransfer();
+                PushUndoAction(moveAction);
+            }
+            else
+            {
+                var action = new SelectionMoveAction(page, e.DeltaX, e.DeltaY, e.SelectedStrokes, e.SelectedTextContainers);
+                PushUndoAction(action);
+            }
         }
 
         private void PageControl_SelectionResizeCompleted(object sender, SelectionResizeCompletedEventArgs e)
@@ -2960,6 +3085,15 @@ namespace Caelum.Pages
             await PrintPdfAsync();
         }
 
+        private void PdfScrollViewer_PreviewMouseRightButtonUp(object sender, MouseButtonEventArgs e)
+        {
+        }
+
+        private async void ContextMenu_PrintClick(object sender, RoutedEventArgs e)
+        {
+            await PrintPdfAsync();
+        }
+
         private async Task PrintPdfAsync()
         {
             if (string.IsNullOrWhiteSpace(_currentPdfPath))
@@ -2978,8 +3112,7 @@ namespace Caelum.Pages
 
             try
             {
-                bool includeAnnotations = PrintAnnotationsToggleButton?.IsChecked != false;
-                var pages = await BuildPrintablePagesAsync(includeAnnotations);
+                var pages = await BuildPrintablePagesAsync(includeAnnotations: true);
                 if (pages.Count == 0)
                     throw new InvalidOperationException("The document has no pages to print.");
 
@@ -3327,8 +3460,6 @@ namespace Caelum.Pages
 
         private void InitializeTextBoxPopup()
         {
-            _textBoxPopup = new Popup { Placement = PlacementMode.Relative, StaysOpen = true, AllowsTransparency = true, VerticalOffset = -50, HorizontalOffset = 0 };
-
             var panel = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(4) };
             var border = new Border
             {
@@ -3336,7 +3467,8 @@ namespace Caelum.Pages
                 BorderBrush = new SolidColorBrush(Color.FromArgb(28, 15, 23, 42)),
                 BorderThickness = new Thickness(1),
                 CornerRadius = new CornerRadius(16),
-                Child = panel
+                Child = panel,
+                Effect = new System.Windows.Media.Effects.DropShadowEffect { BlurRadius = 12, ShadowDepth = 2, Opacity = 0.10, Color = Colors.Black }
             };
 
             var deleteButton = new Button
@@ -3547,7 +3679,7 @@ namespace Caelum.Pages
             panel.Children.Add(sep2);
             panel.Children.Add(colorButton);
 
-            _textBoxPopup.Child = border;
+            _inlineTextBoxToolbar = border;
         }
 
         // Popup no longer auto-deselects. Deselection happens via:
@@ -3590,7 +3722,7 @@ namespace Caelum.Pages
             textBox.IsReadOnly = false;
             ApplyTextBoxChrome(textBox, isSelected: true);
             SyncPopupToSelectedTextBox();
-            ShowTextBoxPopupFor(textBox.Parent as UIElement ?? textBox, refreshPopupPlacement || selectionChanged);
+            PositionInlineTextBoxToolbar(textBox.Parent as UIElement ?? textBox);
 
             if (focusTextBox && !textBox.IsKeyboardFocusWithin)
                 textBox.Focus();
@@ -3609,7 +3741,7 @@ namespace Caelum.Pages
             ApplyTextBoxChrome(_selectedTextBox, isSelected: false);
             _selectedTextBox.IsReadOnly = true;
             _selectedTextBox = null;
-            _textBoxPopup.IsOpen = false;
+            RemoveInlineTextBoxToolbar();
         }
 
         private void ApplyTextBoxChrome(TextBox textBox, bool isSelected)
@@ -3661,7 +3793,7 @@ namespace Caelum.Pages
             _selectedTextBox.FontSize = nextSize;
             _currentFontSize = nextSize;
             MarkDirty();
-            RefreshPopupPlacement(_textBoxPopup);
+            PositionInlineTextBoxToolbar(_selectedTextBox.Parent as UIElement ?? _selectedTextBox);
             _selectedTextBox.Focus();
         }
 
@@ -3721,17 +3853,18 @@ namespace Caelum.Pages
 
         private void UpdateSelectedTextBoxPopupVisibility(bool forceRefresh)
         {
-            if (_selectedTextBox == null || _textBoxPopup == null)
+            if (_selectedTextBox == null)
                 return;
 
             var placementTarget = _selectedTextBox.Parent as UIElement ?? _selectedTextBox;
             if (!IsElementVisibleInPdfViewport(placementTarget))
             {
-                _textBoxPopup.IsOpen = false;
+                if (_inlineTextBoxToolbar != null)
+                    _inlineTextBoxToolbar.Visibility = Visibility.Collapsed;
                 return;
             }
 
-            ShowTextBoxPopupFor(placementTarget, forceRefresh);
+            PositionInlineTextBoxToolbar(placementTarget);
         }
 
         private bool IsElementVisibleInPdfViewport(UIElement element)
@@ -3757,22 +3890,60 @@ namespace Caelum.Pages
             }
         }
 
-        private void ShowTextBoxPopupFor(UIElement placementTarget, bool forceRefresh)
+        private void PositionInlineTextBoxToolbar(UIElement placementTarget)
         {
-            if (_textBoxPopup == null || placementTarget == null)
+            if (_inlineTextBoxToolbar == null || _selectedTextBox == null)
                 return;
 
-            bool targetChanged = !ReferenceEquals(_textBoxPopup.PlacementTarget, placementTarget);
-            _textBoxPopup.PlacementTarget = placementTarget;
-
-            if (!_textBoxPopup.IsOpen)
-            {
-                _textBoxPopup.IsOpen = true;
+            if (placementTarget is not Grid container)
                 return;
-            }
 
-            if (forceRefresh || targetChanged)
-                RefreshPopupPlacement(_textBoxPopup);
+            var canvas = container.Parent as Canvas;
+            if (canvas == null)
+                return;
+
+            if (_toolbarHostPage != null && _toolbarHostPage.TextOverlay != canvas)
+                RemoveInlineTextBoxToolbar();
+
+            _toolbarHostPage = _pageControls.FirstOrDefault(p => p.TextOverlay == canvas);
+            if (_toolbarHostPage == null)
+                return;
+
+            _inlineTextBoxToolbar.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+
+            double containerLeft = Canvas.GetLeft(container);
+            double containerTop = Canvas.GetTop(container);
+
+            double toolbarLeft = containerLeft;
+            double toolbarHeight = _inlineTextBoxToolbar.DesiredSize.Height > 0
+                ? _inlineTextBoxToolbar.DesiredSize.Height
+                : 42;
+            double toolbarTop = containerTop - toolbarHeight;
+
+            if (toolbarTop < 0)
+                toolbarTop = 0;
+
+            Canvas.SetLeft(_inlineTextBoxToolbar, toolbarLeft);
+            Canvas.SetTop(_inlineTextBoxToolbar, toolbarTop);
+            Panel.SetZIndex(_inlineTextBoxToolbar, 2000);
+
+            if (_inlineTextBoxToolbar.Parent == null)
+                canvas.Children.Add(_inlineTextBoxToolbar);
+
+            _inlineTextBoxToolbar.Visibility = Visibility.Visible;
+        }
+
+        private void RemoveInlineTextBoxToolbar()
+        {
+            if (_inlineTextBoxToolbar == null)
+                return;
+
+            _inlineTextBoxToolbar.Visibility = Visibility.Collapsed;
+
+            if (_inlineTextBoxToolbar.Parent is Canvas canvas)
+                canvas.Children.Remove(_inlineTextBoxToolbar);
+
+            _toolbarHostPage = null;
         }
 
         private static void RefreshPopupPlacement(Popup popup)
@@ -3983,7 +4154,8 @@ namespace Caelum.Pages
                     _dragArmed = false;
                     var handle = _draggedContainer.Children.OfType<Border>().FirstOrDefault(b => b.Cursor == Cursors.SizeAll);
                     handle?.CaptureMouse();
-                    _textBoxPopup.IsOpen = false;
+                    if (_inlineTextBoxToolbar != null)
+                        _inlineTextBoxToolbar.Visibility = Visibility.Collapsed;
                 }
             }
 
@@ -4021,7 +4193,7 @@ namespace Caelum.Pages
                     var tb = _draggedContainer.Children.OfType<TextBox>().FirstOrDefault();
                     if (tb != null)
                     {
-                        ShowTextBoxPopupFor(_draggedContainer, forceRefresh: true);
+                        PositionInlineTextBoxToolbar(_draggedContainer);
                         tb.Focus();
                     }
                 }

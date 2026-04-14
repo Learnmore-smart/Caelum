@@ -153,7 +153,7 @@ namespace Caelum.Controls
         public PdfPageControl()
         {
             InitializeComponent();
-            
+
             // Assign stable stroke collection
             InkCanvas.Strokes = _strokes;
 
@@ -656,7 +656,7 @@ namespace Caelum.Controls
                 double size = _drawingAttributes.Width;
                 EraserIndicator.Width = Math.Max(4, size);
                 EraserIndicator.Height = Math.Max(4, size);
-                
+
                 Color c = _drawingAttributes.Color;
                 EraserIndicator.Stroke = new SolidColorBrush(Color.FromArgb(200, c.R, c.G, c.B));
                 EraserIndicator.Fill = _drawingAttributes.IsHighlighter ? new SolidColorBrush(Color.FromArgb(50, c.R, c.G, c.B)) : Brushes.Transparent;
@@ -991,6 +991,16 @@ namespace Caelum.Controls
             InkCanvas.Strokes.Add(stroke);
         }
 
+        public void RemoveTextContainerQuiet(Grid container)
+        {
+            TextOverlayCanvas.Children.Remove(container);
+        }
+
+        public void AddTextContainerQuiet(Grid container)
+        {
+            TextOverlayCanvas.Children.Add(container);
+        }
+
         public void SetSelectionMode(bool enabled)
         {
             _isSelectionMode = enabled;
@@ -1293,6 +1303,7 @@ namespace Caelum.Controls
                         if (_resizeStartHandleDist < 1.0) _resizeStartHandleDist = 1.0;
                         _lastResizeScale = 1.0;
                         SelectionOverlayCanvas.CaptureMouse();
+                        System.Windows.Controls.Panel.SetZIndex(this, 999);
                         return;
                     }
                 }
@@ -1307,6 +1318,7 @@ namespace Caelum.Controls
                     _totalDragDeltaX = 0;
                     _totalDragDeltaY = 0;
                     SelectionOverlayCanvas.CaptureMouse();
+                    System.Windows.Controls.Panel.SetZIndex(this, 999);
                     return;
                 }
             }
@@ -1315,6 +1327,7 @@ namespace Caelum.Controls
             _isSelecting = true;
             _selectionStartPoint = point;
             SelectionOverlayCanvas.CaptureMouse();
+            System.Windows.Controls.Panel.SetZIndex(this, 999);
 
             if (_selectionShape == SelectionShape.FreeForm)
             {
@@ -1425,6 +1438,7 @@ namespace Caelum.Controls
             if (_isResizingSelection)
             {
                 _isResizingSelection = false;
+                System.Windows.Controls.Panel.SetZIndex(this, 0);
                 if (SelectionOverlayCanvas.IsMouseCaptured)
                     SelectionOverlayCanvas.ReleaseMouseCapture();
 
@@ -1438,6 +1452,7 @@ namespace Caelum.Controls
             else if (_isDraggingSelection)
             {
                 _isDraggingSelection = false;
+                System.Windows.Controls.Panel.SetZIndex(this, 0);
                 if (SelectionOverlayCanvas.IsMouseCaptured)
                     SelectionOverlayCanvas.ReleaseMouseCapture();
 
@@ -1452,6 +1467,7 @@ namespace Caelum.Controls
             else if (_isSelecting)
             {
                 _isSelecting = false;
+                System.Windows.Controls.Panel.SetZIndex(this, 0);
                 if (SelectionOverlayCanvas.IsMouseCaptured)
                     SelectionOverlayCanvas.ReleaseMouseCapture();
 

@@ -121,7 +121,17 @@
                       ManipulationInertiaStarting="PdfScrollViewer_ManipulationInertiaStarting"
                       PreviewTouchDown="PdfScrollViewer_PreviewTouchDown"
                       PreviewTouchMove="PdfScrollViewer_PreviewTouchMove"
-                      PreviewTouchUp="PdfScrollViewer_PreviewTouchUp">
+                      PreviewTouchUp="PdfScrollViewer_PreviewTouchUp"
+                      PreviewMouseRightButtonUp="PdfScrollViewer_PreviewMouseRightButtonUp">
+            <ScrollViewer.ContextMenu>
+                <ContextMenu>
+                    <MenuItem Header="Print..." InputGestureText="Ctrl+P" Click="ContextMenu_PrintClick">
+                        <MenuItem.Icon>
+                            <TextBlock Text="&#xE749;" FontFamily="Segoe MDL2 Assets" FontSize="14" Foreground="#555"/>
+                        </MenuItem.Icon>
+                    </MenuItem>
+                </ContextMenu>
+            </ScrollViewer.ContextMenu>
             <StackPanel x:Name="PagesContainer" Margin="32,20,32,32" HorizontalAlignment="Center">
                 <StackPanel.LayoutTransform>
                     <ScaleTransform x:Name="PagesZoomTransform" ScaleX="1" ScaleY="1"/>
@@ -130,8 +140,8 @@
         </ScrollViewer>
 
         <!-- Floating Toolbar -->
-        <Border x:Name="ToolbarBorder" HorizontalAlignment="Left" VerticalAlignment="Top"
-                Margin="32,12,0,0" Padding="8,4" CornerRadius="14"
+        <Border x:Name="ToolbarBorder" HorizontalAlignment="Center" VerticalAlignment="Top"
+                Margin="0,12,0,0" Padding="8,4" CornerRadius="14"
                 Background="White"
                 BorderBrush="#D1D5DB"
                 BorderThickness="1">
@@ -170,8 +180,6 @@
                     <TextBlock x:Name="HighlighterIcon" Text="&#xE7E6;" FontFamily="Segoe MDL2 Assets" FontSize="19" Foreground="#F59E0B"/>
                 </ToggleButton>
 
-
-
                 <!-- Eraser -->
                 <ToggleButton x:Name="EraserToolButton" Click="EraserToolButton_Click"
                         Style="{StaticResource ToolbarToggleButtonStyle}"
@@ -200,22 +208,6 @@
                         Style="{StaticResource ToolbarButtonStyle}"
                         Width="42" Height="36" Margin="2,0" ToolTip="Save">
                     <TextBlock Text="&#xE74E;" FontFamily="Segoe MDL2 Assets" FontSize="17" Foreground="#444"/>
-                </Button>
-
-                <!-- Print annotations toggle -->
-                <ToggleButton x:Name="PrintAnnotationsToggleButton"
-                        Style="{StaticResource ToolbarToggleButtonStyle}"
-                        Width="70" Height="36" Margin="2,0"
-                        ToolTip="Include annotations when printing"
-                        IsChecked="True">
-                    <TextBlock Text="Markup" FontSize="11" FontWeight="SemiBold" Foreground="#555"/>
-                </ToggleButton>
-
-                <!-- Print -->
-                <Button x:Name="PrintPdfButton" Click="PrintPdf_Click"
-                        Style="{StaticResource ToolbarButtonStyle}"
-                        Width="42" Height="36" Margin="2,0" ToolTip="Print (Ctrl+P)">
-                    <TextBlock Text="&#xE749;" FontFamily="Segoe MDL2 Assets" FontSize="17" Foreground="#444"/>
                 </Button>
 
                 <!-- Separator -->
