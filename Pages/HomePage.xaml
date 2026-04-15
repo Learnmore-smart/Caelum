@@ -475,6 +475,11 @@
                             Style="{StaticResource SelectionActionButtonStyle}"
                             Content="{Binding SelectionClearText}"
                             IsEnabled="{Binding HasSelectedTiles}"/>
+                    <Button x:Name="MoveSelectionButton"
+                            Click="MoveSelectionButton_Click"
+                            Style="{StaticResource SelectionActionButtonStyle}"
+                            Content="{Binding SelectionMoveText}"
+                            IsEnabled="{Binding HasSelectedTiles}"/>
                     <Button x:Name="RemoveSelectionButton"
                             Click="RemoveSelectionButton_Click"
                             Style="{StaticResource SelectionDangerButtonStyle}"

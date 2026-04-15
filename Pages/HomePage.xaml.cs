@@ -877,10 +877,14 @@ namespace Caelum.Pages
             if (sender is not FrameworkElement element || element.Tag is not HomeTile tile || !tile.IsFolder)
                 return;
 
-            var canAcceptDrop = HomePageDragDropHelper.HasSupportedFolderDropPayload(e.Data);
+            var pdfPaths = HomePageDragDropHelper.GetDroppedPdfPaths(e.Data);
+            var libraryPaths = HomePageDragDropHelper.GetLibraryTilePaths(e.Data);
+            var canAcceptDrop = pdfPaths.Length > 0 || libraryPaths.Length > 0;
 
             tile.IsDropTarget = isActive && canAcceptDrop;
-            e.Effects = canAcceptDrop ? DragDropEffects.Move : DragDropEffects.None;
+            e.Effects = canAcceptDrop
+                ? (libraryPaths.Length > 0 ? DragDropEffects.Move : DragDropEffects.Copy)
+                : DragDropEffects.None;
             e.Handled = true;
         }
 

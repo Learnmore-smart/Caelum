@@ -65,7 +65,7 @@ namespace Caelum.Services
         }
 
         public int PageCount => _pdfDocument?.PageCount ?? 0;
-        public Dictionary<int, Models.PageAnnotation> ExtractedAnnotations { get; private set; } = new();
+        public Dictionary<int, Models.PageAnnotation> ExtractedAnnotations { get; set; } = new();
 
         public static async Task CreateBlankPdfAsync(
             string filePath,
@@ -571,18 +571,22 @@ namespace Caelum.Services
                                     double ca = dict.Elements.ContainsKey("/CA") ? GetDouble(dict.Elements["/CA"], 1.0) : 1.0;
                                     highlightAnnot.A = (byte)(ca * 255);
 
-                                    // QuadPoints: [TL.X, TL.Y, TR.X, TR.Y, BL.X, BL.Y, BR.X, BR.Y]
+                                    // QuadPoints format can vary between Edge, Chrome, and Acrobat
                                     for (int pIdx = 0; pIdx < quadPoints.Elements.Count - 7; pIdx += 8)
                                     {
-                                        double x1 = GetDouble(quadPoints.Elements[pIdx]);
-                                        double y1 = GetDouble(quadPoints.Elements[pIdx + 1]);
-                                        double x2 = GetDouble(quadPoints.Elements[pIdx + 2]);
-                                        double y2 = GetDouble(quadPoints.Elements[pIdx + 7]);
+                                        double qx1 = GetDouble(quadPoints.Elements[pIdx]);
+                                        double qy1 = GetDouble(quadPoints.Elements[pIdx + 1]);
+                                        double qx2 = GetDouble(quadPoints.Elements[pIdx + 2]);
+                                        double qy2 = GetDouble(quadPoints.Elements[pIdx + 3]);
+                                        double qx3 = GetDouble(quadPoints.Elements[pIdx + 4]);
+                                        double qy3 = GetDouble(quadPoints.Elements[pIdx + 5]);
+                                        double qx4 = GetDouble(quadPoints.Elements[pIdx + 6]);
+                                        double qy4 = GetDouble(quadPoints.Elements[pIdx + 7]);
 
-                                        double minX = Math.Min(x1, x2);
-                                        double maxX = Math.Max(x1, x2);
-                                        double minY = Math.Min(y1, y2);
-                                        double maxY = Math.Max(y1, y2);
+                                        double minX = Math.Min(Math.Min(qx1, qx2), Math.Min(qx3, qx4));
+                                        double maxX = Math.Max(Math.Max(qx1, qx2), Math.Max(qx3, qx4));
+                                        double minY = Math.Min(Math.Min(qy1, qy2), Math.Min(qy3, qy4));
+                                        double maxY = Math.Max(Math.Max(qy1, qy2), Math.Max(qy3, qy4));
 
                                         double x_ui = minX * scale;
                                         double w_ui = (maxX - minX) * scale;

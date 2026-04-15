@@ -6,6 +6,7 @@ using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Windows;
+using System.Windows.Controls;
 using Microsoft.Win32;
 using Caelum.Services;
 
@@ -31,6 +32,8 @@ namespace Caelum.Pages
 
         public string SelectionDoneText => LocalizationService.Get("Home.Selection.Done");
 
+        public string SelectionMoveText => LocalizationService.Get("Home.Selection.Move");
+
         public string SelectionRemoveText => LocalizationService.Get("Home.Selection.Remove");
 
         public string SelectionSelectAllText => LocalizationService.Get("Home.Selection.SelectAll");
@@ -50,6 +53,7 @@ namespace Caelum.Pages
             OnPropertyChanged(nameof(SelectionHint));
             OnPropertyChanged(nameof(SelectionClearText));
             OnPropertyChanged(nameof(SelectionDoneText));
+            OnPropertyChanged(nameof(SelectionMoveText));
             OnPropertyChanged(nameof(SelectionRemoveText));
             OnPropertyChanged(nameof(SelectionSelectAllText));
             GetMainWindow()?.RefreshSelectButtonVisualState();
@@ -190,6 +194,72 @@ namespace Caelum.Pages
             {
                 await ShowDialogAsync(LocalizationService.Get("Common.Error"), LocalizationService.Format("Home.ExportFailed", ex.Message));
             }
+        }
+
+        private void MoveSelectionButton_Click(object sender, RoutedEventArgs e)
+        {
+            var selectedTiles = HomeTiles
+                .Where(candidate => candidate.IsFile && candidate.IsSelected)
+                .ToList();
+
+            if (selectedTiles.Count == 0)
+                return;
+
+            var contextMenu = new System.Windows.Controls.ContextMenu();
+
+            if (IsInsideFolder)
+            {
+                var rootMenuItem = new System.Windows.Controls.MenuItem { Header = LocalizationService.Get("Home.LibraryRoot") };
+                rootMenuItem.Click += async (s, args) =>
+                {
+                    foreach (var tile in selectedTiles) RecentFilesService.MoveToFolder(tile.Path, null);
+                    await RefreshCurrentFolderAsync();
+                    ClearSelectedTiles();
+                };
+                contextMenu.Items.Add(rootMenuItem);
+
+                var currentFolder = RecentFilesService.GetFolder(_currentFolderId);
+                if (currentFolder != null && !string.IsNullOrWhiteSpace(currentFolder.ParentFolderId))
+                {
+                    var parentFolder = RecentFilesService.GetFolder(currentFolder.ParentFolderId);
+                    if (parentFolder != null)
+                    {
+                        var parentMenuItem = new System.Windows.Controls.MenuItem { Header = parentFolder.DisplayName };
+                        parentMenuItem.Click += async (s, args) =>
+                        {
+                            foreach (var tile in selectedTiles) RecentFilesService.MoveToFolder(tile.Path, parentFolder.Id);
+                            await RefreshCurrentFolderAsync();
+                            ClearSelectedTiles();
+                        };
+                        contextMenu.Items.Add(parentMenuItem);
+                    }
+                }
+
+                contextMenu.Items.Add(new System.Windows.Controls.Separator());
+            }
+
+            var folderTiles = HomeTiles.Where(t => t.IsFolder).ToList();
+            foreach (var folder in folderTiles)
+            {
+                var menuItem = new System.Windows.Controls.MenuItem { Header = folder.FileName };
+                menuItem.Click += async (s, args) =>
+                {
+                    foreach (var tile in selectedTiles) RecentFilesService.MoveToFolder(tile.Path, folder.Id);
+                    await RefreshCurrentFolderAsync();
+                    ClearSelectedTiles();
+                };
+                contextMenu.Items.Add(menuItem);
+            }
+
+            if (contextMenu.Items.Count == 0 || (contextMenu.Items.Count == 1 && contextMenu.Items[0] is System.Windows.Controls.Separator))
+            {
+                contextMenu.Items.Clear();
+                contextMenu.Items.Add(new System.Windows.Controls.MenuItem { Header = "No folders available", IsEnabled = false });
+            }
+
+            contextMenu.PlacementTarget = sender as UIElement;
+            contextMenu.Placement = System.Windows.Controls.Primitives.PlacementMode.Top;
+            contextMenu.IsOpen = true;
         }
 
         private void OpenContainingFolder(HomeTile tile)

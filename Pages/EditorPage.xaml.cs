@@ -61,6 +61,11 @@ namespace Caelum.Pages
         private Popup _eraserPopup;
         private Popup _selectionPopup;
         private PdfPageControl _activeSelectionPage;
+        private bool _isDelegatingSelection;
+        private PdfPageControl _selectionDelegateTarget;
+
+        private Point _lastClickedPoint;
+        private PdfPageControl _lastClickedPage;
 
         private const double PdfTextSelectionDragThreshold = 4.0;
         private PdfPageControl _pdfTextSelectionPage;
@@ -103,6 +108,62 @@ namespace Caelum.Pages
             public Task RedoAsync()
             {
                 _page.AddStrokeQuiet(_stroke);
+                return Task.CompletedTask;
+            }
+        }
+
+        private class ItemsAddedAction : IUndoAction
+        {
+            private readonly PdfPageControl _page;
+            private readonly List<System.Windows.Ink.Stroke> _strokes;
+            private readonly List<System.Windows.Controls.Grid> _containers;
+
+            public ItemsAddedAction(PdfPageControl page, List<System.Windows.Ink.Stroke> strokes, List<System.Windows.Controls.Grid> containers)
+            {
+                _page = page;
+                _strokes = strokes;
+                _containers = containers;
+            }
+            public bool LeavesDocumentDirty => true;
+            public Task UndoAsync()
+            {
+                foreach (var stroke in _strokes) _page.RemoveStrokeQuiet(stroke);
+                foreach (var container in _containers) _page.RemoveTextContainerQuiet(container);
+                return Task.CompletedTask;
+            }
+
+            public Task RedoAsync()
+            {
+                foreach (var stroke in _strokes) _page.AddStrokeQuiet(stroke);
+                foreach (var container in _containers) _page.AddTextContainerQuiet(container);
+                return Task.CompletedTask;
+            }
+        }
+
+        private class ItemsRemovedAction : IUndoAction
+        {
+            private readonly PdfPageControl _page;
+            private readonly List<System.Windows.Ink.Stroke> _strokes;
+            private readonly List<System.Windows.Controls.Grid> _containers;
+
+            public ItemsRemovedAction(PdfPageControl page, List<System.Windows.Ink.Stroke> strokes, List<System.Windows.Controls.Grid> containers)
+            {
+                _page = page;
+                _strokes = strokes;
+                _containers = containers;
+            }
+            public bool LeavesDocumentDirty => true;
+            public Task UndoAsync()
+            {
+                foreach (var stroke in _strokes) _page.AddStrokeQuiet(stroke);
+                foreach (var container in _containers) _page.AddTextContainerQuiet(container);
+                return Task.CompletedTask;
+            }
+
+            public Task RedoAsync()
+            {
+                foreach (var stroke in _strokes) _page.RemoveStrokeQuiet(stroke);
+                foreach (var container in _containers) _page.RemoveTextContainerQuiet(container);
                 return Task.CompletedTask;
             }
         }
@@ -920,6 +981,16 @@ namespace Caelum.Pages
                     e.Handled = true;
                 }
             }
+            else if (Keyboard.Modifiers == ModifierKeys.Control && e.Key == Key.X)
+            {
+                if (_activeSelectionPage != null && _activeSelectionPage.HasSelection)
+                {
+                    CutSelection();
+                    var mw = Window.GetWindow(this) as MainWindow;
+                    mw?.ShowToast("Cut", "\uE8C6", 1500); // ✂ icon roughly
+                    e.Handled = true;
+                }
+            }
             else if (Keyboard.Modifiers == ModifierKeys.Control && e.Key == Key.V)
             {
                 PasteSelection();
@@ -1308,6 +1379,49 @@ namespace Caelum.Pages
                 PdfScrollViewer.CaptureMouse();
                 PdfScrollViewer.Cursor = Cursors.ScrollAll;
                 e.Handled = true;
+                return;
+            }
+
+            if (e.ChangedButton == MouseButton.Left && _currentTool == ToolType.Select)
+            {
+                Controls.PdfPageControl closestPage = null;
+                double closestDistance = double.MaxValue;
+
+                foreach (var page in _pageControls)
+                {
+                    if (page.IsSelectionMode)
+                    {
+                        var ptInPage = e.GetPosition(page);
+
+                        // Check both X and Y bounds with a 50px buffer
+                        if (ptInPage.X >= -50 && ptInPage.X <= page.ActualWidth + 50 &&
+                            ptInPage.Y >= -50 && ptInPage.Y <= page.ActualHeight + 50)
+                        {
+                            // Calculate center-point distance to find the closest if overlapping
+                            // (or just grab the first valid under the cursor)
+                            double distance = Math.Sqrt(Math.Pow(ptInPage.X - (page.ActualWidth / 2), 2) +
+                                                        Math.Pow(ptInPage.Y - (page.ActualHeight / 2), 2));
+
+                            if (distance < closestDistance)
+                            {
+                                closestDistance = distance;
+                                closestPage = page;
+                            }
+                        }
+                    }
+                }
+
+                var targetPage = closestPage;
+
+                if (targetPage == null || !targetPage.IsSelectionMode) return;
+
+                var point = e.GetPosition(targetPage);
+                targetPage.InvokeSelectionMouseDownCore(point);
+
+                _isDelegatingSelection = true;
+                _selectionDelegateTarget = targetPage;
+                targetPage.SelectionOverlayCanvas.CaptureMouse();
+                e.Handled = true;
             }
         }
 
@@ -1322,6 +1436,14 @@ namespace Caelum.Pages
                 PdfScrollViewer.ScrollToVerticalOffset(_middleMouseStartVerticalOffset - deltaY);
                 PdfScrollViewer.ScrollToHorizontalOffset(_middleMouseStartHorizontalOffset - deltaX);
                 e.Handled = true;
+                return;
+            }
+
+            if (_isDelegatingSelection && _selectionDelegateTarget != null)
+            {
+                var point = e.GetPosition(_selectionDelegateTarget);
+                _selectionDelegateTarget.InvokeSelectionMouseMoveCore(point);
+                e.Handled = true;
             }
         }
 
@@ -1332,6 +1454,20 @@ namespace Caelum.Pages
                 _isMiddleMousePanning = false;
                 PdfScrollViewer.ReleaseMouseCapture();
                 PdfScrollViewer.Cursor = Cursors.Arrow;
+                e.Handled = true;
+                return;
+            }
+
+            if (e.ChangedButton == MouseButton.Left && _isDelegatingSelection && _selectionDelegateTarget != null)
+            {
+                _selectionDelegateTarget.InvokeSelectionMouseUpCore();
+                if (_selectionDelegateTarget.SelectionOverlayCanvas.IsMouseCaptured)
+                {
+                    _selectionDelegateTarget.SelectionOverlayCanvas.ReleaseMouseCapture();
+                }
+
+                _isDelegatingSelection = false;
+                _selectionDelegateTarget = null;
                 e.Handled = true;
             }
         }
@@ -1859,11 +1995,28 @@ namespace Caelum.Pages
 
         private void DeleteSelection()
         {
-            if (_activeSelectionPage == null)
+            if (_activeSelectionPage == null || !_activeSelectionPage.HasSelection)
                 return;
+
+            var strokes = new List<System.Windows.Ink.Stroke>(_activeSelectionPage.SelectedStrokes);
+            var containers = new List<System.Windows.Controls.Grid>(_activeSelectionPage.SelectedTextContainers);
+
+            foreach (var s in strokes) _activeSelectionPage.RemoveStrokeQuiet(s);
+            foreach (var c in containers) _activeSelectionPage.RemoveTextContainerQuiet(c);
+
+            PushUndoAction(new ItemsRemovedAction(_activeSelectionPage, strokes, containers));
 
             _activeSelectionPage.ClearSelection();
             MarkDirty();
+        }
+
+        private void CutSelection()
+        {
+            if (_activeSelectionPage == null || !_activeSelectionPage.HasSelection)
+                return;
+
+            CopySelection();
+            DeleteSelection();
         }
 
         private void CopySelection()
@@ -1955,8 +2108,8 @@ namespace Caelum.Pages
                 if (pageAnnotation == null)
                     return;
 
-                // Find the active page - prefer _activeSelectionPage, otherwise find first visible page
-                var targetPage = _activeSelectionPage;
+                // Find the active page - prefer _lastClickedPage, otherwise find first visible page
+                var targetPage = _lastClickedPage ?? _activeSelectionPage;
                 if (targetPage == null)
                 {
                     targetPage = _pageControls.FirstOrDefault();
@@ -1965,8 +2118,49 @@ namespace Caelum.Pages
                 if (targetPage == null)
                     return;
 
-                // Add a small offset to prevent pasting exactly on top of original
-                const double pasteOffset = 20.0;
+                // Add a small offset to prevent pasting exactly on top of original unless we clicked somewhere
+                double pasteOffsetX = 20.0;
+                double pasteOffsetY = 20.0;
+
+                // If we have a clicked page and point, offset relative to it
+                if (_lastClickedPage == targetPage)
+                {
+                    double minX = double.MaxValue;
+                    double minY = double.MaxValue;
+                    bool hasBoundingBox = false;
+
+                    if (pageAnnotation.Strokes != null)
+                    {
+                        foreach (var stroke in pageAnnotation.Strokes)
+                        {
+                            foreach (var pt in stroke.Points)
+                            {
+                                hasBoundingBox = true;
+                                if (pt[0] < minX) minX = pt[0];
+                                if (pt[1] < minY) minY = pt[1];
+                            }
+                        }
+                    }
+
+                    if (pageAnnotation.Texts != null)
+                    {
+                        foreach (var text in pageAnnotation.Texts)
+                        {
+                            hasBoundingBox = true;
+                            if (text.X < minX) minX = text.X;
+                            if (text.Y < minY) minY = text.Y;
+                        }
+                    }
+
+                    if (hasBoundingBox)
+                    {
+                        pasteOffsetX = _lastClickedPoint.X - minX;
+                        pasteOffsetY = _lastClickedPoint.Y - minY;
+                    }
+                }
+
+                var pastedStrokes = new List<System.Windows.Ink.Stroke>();
+                var pastedContainers = new List<System.Windows.Controls.Grid>();
 
                 // Paste strokes
                 if (pageAnnotation.Strokes != null)
@@ -1987,10 +2181,14 @@ namespace Caelum.Pages
 
                         foreach (var point in strokeAnnotation.Points)
                         {
-                            offsetStroke.Points.Add(new double[] { point[0] + pasteOffset, point[1] + pasteOffset });
+                            offsetStroke.Points.Add(new double[] { point[0] + pasteOffsetX, point[1] + pasteOffsetY });
                         }
 
-                        targetPage.AddStroke(offsetStroke);
+                        var s = targetPage.AddStroke(offsetStroke);
+                        if (s != null)
+                        {
+                            pastedStrokes.Add(s);
+                        }
                     }
                 }
 
@@ -2002,8 +2200,8 @@ namespace Caelum.Pages
                         var offsetTextAnnotation = new TextAnnotation
                         {
                             Text = textAnnotation.Text,
-                            X = textAnnotation.X + pasteOffset,
-                            Y = textAnnotation.Y + pasteOffset,
+                            X = textAnnotation.X + pasteOffsetX,
+                            Y = textAnnotation.Y + pasteOffsetY,
                             R = textAnnotation.R,
                             G = textAnnotation.G,
                             B = textAnnotation.B,
@@ -2012,8 +2210,17 @@ namespace Caelum.Pages
 
                         // Create the text box on the target page
                         var color = Color.FromRgb(offsetTextAnnotation.R, offsetTextAnnotation.G, offsetTextAnnotation.B);
-                        CreateTextBox(targetPage, new Point(offsetTextAnnotation.X, offsetTextAnnotation.Y), color, offsetTextAnnotation.FontSize, offsetTextAnnotation.Text, select: false, alignToPointer: false);
+                        var c = CreateTextBox(targetPage, new Point(offsetTextAnnotation.X, offsetTextAnnotation.Y), color, offsetTextAnnotation.FontSize, offsetTextAnnotation.Text, select: false, alignToPointer: false);
+                        if (c != null)
+                        {
+                            pastedContainers.Add(c);
+                        }
                     }
+                }
+
+                if (pastedStrokes.Count > 0 || pastedContainers.Count > 0)
+                {
+                    PushUndoAction(new ItemsAddedAction(targetPage, pastedStrokes, pastedContainers));
                 }
 
                 MarkDirty();
@@ -2845,7 +3052,10 @@ namespace Caelum.Pages
 
             if (sender is PdfPageControl page)
             {
-                _activeSelectionPage = page;
+                if (e.HasSelection)
+                    _activeSelectionPage = page;
+                else if (_activeSelectionPage == page)
+                    _activeSelectionPage = null;
             }
         }
 
@@ -2939,6 +3149,12 @@ namespace Caelum.Pages
         private void ActivateTool(ToolType tool)
         {
             if (_currentTool == tool) return;
+
+            if (_currentTool == ToolType.Select && tool != ToolType.Select)
+            {
+                _activeSelectionPage?.ClearSelection();
+                _activeSelectionPage = null;
+            }
 
             bool wasSelectableSurfaceActive = IsSelectablePdfSurfaceActive;
 
@@ -3075,9 +3291,65 @@ namespace Caelum.Pages
             NavigateBackCore();
         }
 
+        private void ClearAllAnnotations()
+        {
+            foreach (var page in _pageControls)
+            {
+                page.ClearAllAnnotations();
+            }
+        }
+
         private async void SavePdf_Click(object sender, RoutedEventArgs e)
         {
             await SaveAnnotationsToPdfAsync();
+        }
+
+        private void VersionHistory_Click(object sender, RoutedEventArgs e)
+        {
+            if (string.IsNullOrEmpty(_currentPdfPath)) return;
+
+            var versions = Services.VersionControlService.GetVersions(_currentPdfPath);
+            if (versions.Count == 0)
+            {
+                GetMainWindow()?.ShowToast("No version history available", "\uE946");
+                return;
+            }
+
+            var menu = new ContextMenu
+            {
+                MaxHeight = 300
+            };
+            ScrollViewer.SetVerticalScrollBarVisibility(menu, ScrollBarVisibility.Auto);
+
+            foreach (var vFile in versions)
+            {
+                var dt = System.IO.File.GetCreationTime(vFile);
+                var item = new MenuItem { Header = dt.ToString("yyyy-MM-dd HH:mm:ss") };
+                item.Click += async (s, args) =>
+                {
+                    try
+                    {
+                        var data = await Services.VersionControlService.LoadVersionAsync(vFile);
+                        if (data != null)
+                        {
+                            ClearAllAnnotations();
+                            _pdfService.ExtractedAnnotations = data;
+                            await LoadAnnotationsFromPdfServiceAsync();
+                            GetMainWindow()?.ShowToast($"Restored version from {dt:g}");
+                            MarkDirty();
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        GetMainWindow()?.ShowToast("Failed to load version");
+                        Console.WriteLine($"[VersionHistory] Error: {ex.Message}");
+                    }
+                };
+                menu.Items.Add(item);
+            }
+
+            menu.PlacementTarget = VersionHistoryButton;
+            menu.IsOpen = true;
         }
 
         private async void PrintPdf_Click(object sender, RoutedEventArgs e)
@@ -3962,6 +4234,12 @@ namespace Caelum.Pages
 
         private void PageControl_TextOverlayPointerPressed(object sender, MouseButtonEventArgs e)
         {
+            if (sender is PdfPageControl pageEvent)
+            {
+                _lastClickedPoint = e.GetPosition(pageEvent);
+                _lastClickedPage = pageEvent;
+            }
+
             if (_currentTool != ToolType.Text) return;
 
             var page = sender as PdfPageControl;
@@ -3978,7 +4256,7 @@ namespace Caelum.Pages
             e.Handled = true;
         }
 
-        private void CreateTextBox(PdfPageControl page, Point position, Color? color = null, double? fontSize = null, string text = null, bool select = true, bool alignToPointer = false)
+        private Grid CreateTextBox(PdfPageControl page, Point position, Color? color = null, double? fontSize = null, string text = null, bool select = true, bool alignToPointer = false)
         {
             var textPadding = new Thickness(10, 8, 10, 8);
             var container = new Grid { Background = Brushes.Transparent };
@@ -3998,12 +4276,16 @@ namespace Caelum.Pages
             };
             Grid.SetColumnSpan(chrome, 2);
 
+            double availableWidth = page.ActualWidth - Math.Max(0, position.X);
+            double maxTextBoxWidth = Math.Max(100, availableWidth - textPadding.Left - textPadding.Right - 40);
+
             var textBox = new TextBox
             {
                 Text = text ?? "Text",
                 AcceptsReturn = true,
                 TextWrapping = TextWrapping.Wrap,
                 MinWidth = 100,
+                MaxWidth = maxTextBoxWidth,
                 MinHeight = 30,
                 BorderThickness = new Thickness(0),
                 Background = Brushes.Transparent,
@@ -4012,6 +4294,15 @@ namespace Caelum.Pages
                 IsReadOnly = !select,
                 Padding = textPadding,
                 CaretBrush = new SolidColorBrush(Color.FromRgb(0, 120, 212))
+            };
+
+            page.SizeChanged += (s, e) =>
+            {
+                if (textBox.Parent is Grid containerGrid)
+                {
+                    double newAvailableWidth = page.ActualWidth - Canvas.GetLeft(containerGrid);
+                    textBox.MaxWidth = Math.Max(100, newAvailableWidth - textPadding.Left - textPadding.Right - 40);
+                }
             };
 
             var dragHandle = new Border
@@ -4111,6 +4402,8 @@ namespace Caelum.Pages
                 textBox.Focus();
                 MarkDirty();
             }
+
+            return container;
         }
 
         private void DragHandle_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
@@ -4204,6 +4497,12 @@ namespace Caelum.Pages
 
         private void PageControl_BackgroundPointerPressed(object sender, MouseButtonEventArgs e)
         {
+            if (sender is PdfPageControl page)
+            {
+                _lastClickedPoint = e.GetPosition(page);
+                _lastClickedPage = page;
+            }
+
             if (_selectedTextBox != null) DeselectTextBox();
         }
 
@@ -4218,6 +4517,9 @@ namespace Caelum.Pages
             try
             {
                 var annotations = CollectAnnotations();
+
+                // Save to local version control sidecar
+                _ = Services.VersionControlService.SaveVersionAsync(_currentPdfPath, annotations);
 
                 await _pdfService.SaveAnnotationsToPdfAsync(_currentPdfPath, annotations);
                 _isDirty = false;
@@ -4240,6 +4542,10 @@ namespace Caelum.Pages
             try
             {
                 var annotations = CollectAnnotations();
+
+                // Save to local version control sidecar
+                _ = Services.VersionControlService.SaveVersionAsync(_currentPdfPath, annotations);
+
                 await _pdfService.SaveAnnotationsToPdfAsync(_currentPdfPath, annotations);
                 _isDirty = false;
                 return true;

@@ -107,6 +107,7 @@ namespace Caelum.Controls
 
         // Selection transform state
         private bool _isSelectionMode;
+        public bool IsSelectionMode => _isSelectionMode;
         private SelectionFilter _selectionFilter = SelectionFilter.Both;
         private SelectionShape _selectionShape = SelectionShape.Rectangle;
         private bool _isSelecting;
@@ -199,7 +200,7 @@ namespace Caelum.Controls
             if (tablet == null) return false;
             // Pen devices report as Stylus. Some pen-as-touch devices (e.g.
             // Huawei M-Pencil) report as Touch but have multiple stylus buttons.
-            // Real fingers have TabletDeviceType.Touch with ≤1 button.
+            // Real fingers have TabletDeviceType.Touch with �? button.
             if (tablet.Type == System.Windows.Input.TabletDeviceType.Stylus)
                 return false;
             return tablet.Type == System.Windows.Input.TabletDeviceType.Touch
@@ -942,9 +943,9 @@ namespace Caelum.Controls
             return list;
         }
 
-        public void AddStroke(StrokeAnnotation sa)
+        public Stroke AddStroke(StrokeAnnotation sa)
         {
-            if (sa.Points == null || sa.Points.Count == 0) return;
+            if (sa.Points == null || sa.Points.Count == 0) return null;
 
             var color = Color.FromArgb(sa.A, sa.R, sa.G, sa.B);
             var attrs = new DrawingAttributes
@@ -973,12 +974,23 @@ namespace Caelum.Controls
                 var stroke = new Stroke(stylusPoints);
                 stroke.DrawingAttributes = attrs;
                 InkCanvas.Strokes.Add(stroke);
+                return stroke;
             }
+
+            return null;
         }
 
         public void ClearStrokes()
         {
             InkCanvas.Strokes.Clear();
+        }
+
+        public void ClearAllAnnotations()
+        {
+            ClearStrokes();
+            TextOverlayCanvas.Children.Clear();
+            _highlights.Clear();
+            HighlightsCanvas.Children.Clear();
         }
 
         public void RemoveStrokeQuiet(Stroke stroke)
@@ -1249,10 +1261,10 @@ namespace Caelum.Controls
         {
             return handleIndex switch
             {
-                0 => new Point(bounds.Right, bounds.Bottom),  // TL → BR
-                1 => new Point(bounds.Left, bounds.Bottom),   // TR → BL
-                2 => new Point(bounds.Right, bounds.Top),     // BL → TR
-                3 => new Point(bounds.Left, bounds.Top),      // BR → TL
+                0 => new Point(bounds.Right, bounds.Bottom),  // TL �?BR
+                1 => new Point(bounds.Left, bounds.Bottom),   // TR �?BL
+                2 => new Point(bounds.Right, bounds.Top),     // BL �?TR
+                3 => new Point(bounds.Left, bounds.Top),      // BR �?TL
                 _ => new Point(bounds.Left + bounds.Width / 2, bounds.Top + bounds.Height / 2)
             };
         }
@@ -1274,6 +1286,21 @@ namespace Caelum.Controls
                 3 => Cursors.SizeNWSE,  // BR
                 _ => Cursors.SizeAll
             };
+        }
+
+        public void InvokeSelectionMouseDownCore(Point point)
+        {
+            SelectionOverlayCanvas_MouseLeftButtonDownCore(point);
+        }
+
+        public void InvokeSelectionMouseMoveCore(Point point)
+        {
+            SelectionOverlayCanvas_MouseMoveCore(point);
+        }
+
+        public void InvokeSelectionMouseUpCore()
+        {
+            SelectionOverlayCanvas_MouseLeftButtonUpCore();
         }
 
         private void SelectionOverlayCanvas_MouseLeftButtonDownCore(Point point)
@@ -1303,7 +1330,7 @@ namespace Caelum.Controls
                         if (_resizeStartHandleDist < 1.0) _resizeStartHandleDist = 1.0;
                         _lastResizeScale = 1.0;
                         SelectionOverlayCanvas.CaptureMouse();
-                        System.Windows.Controls.Panel.SetZIndex(this, 999);
+                        if (this.Parent is System.Windows.Controls.Grid pg1) { System.Windows.Controls.Panel.SetZIndex(pg1, 999); }
                         return;
                     }
                 }
@@ -1318,7 +1345,7 @@ namespace Caelum.Controls
                     _totalDragDeltaX = 0;
                     _totalDragDeltaY = 0;
                     SelectionOverlayCanvas.CaptureMouse();
-                    System.Windows.Controls.Panel.SetZIndex(this, 999);
+                    if (this.Parent is System.Windows.Controls.Grid pg2) { System.Windows.Controls.Panel.SetZIndex(pg2, 999); }
                     return;
                 }
             }
@@ -1327,7 +1354,7 @@ namespace Caelum.Controls
             _isSelecting = true;
             _selectionStartPoint = point;
             SelectionOverlayCanvas.CaptureMouse();
-            System.Windows.Controls.Panel.SetZIndex(this, 999);
+            if (this.Parent is System.Windows.Controls.Grid pg3) { System.Windows.Controls.Panel.SetZIndex(pg3, 999); }
 
             if (_selectionShape == SelectionShape.FreeForm)
             {
@@ -1438,7 +1465,7 @@ namespace Caelum.Controls
             if (_isResizingSelection)
             {
                 _isResizingSelection = false;
-                System.Windows.Controls.Panel.SetZIndex(this, 0);
+                if (this.Parent is System.Windows.Controls.Grid pGrid) { System.Windows.Controls.Panel.SetZIndex(pGrid, 0); }
                 if (SelectionOverlayCanvas.IsMouseCaptured)
                     SelectionOverlayCanvas.ReleaseMouseCapture();
 
@@ -1452,7 +1479,7 @@ namespace Caelum.Controls
             else if (_isDraggingSelection)
             {
                 _isDraggingSelection = false;
-                System.Windows.Controls.Panel.SetZIndex(this, 0);
+                if (this.Parent is System.Windows.Controls.Grid pGrid) { System.Windows.Controls.Panel.SetZIndex(pGrid, 0); }
                 if (SelectionOverlayCanvas.IsMouseCaptured)
                     SelectionOverlayCanvas.ReleaseMouseCapture();
 
@@ -1467,7 +1494,7 @@ namespace Caelum.Controls
             else if (_isSelecting)
             {
                 _isSelecting = false;
-                System.Windows.Controls.Panel.SetZIndex(this, 0);
+                if (this.Parent is System.Windows.Controls.Grid pGrid) { System.Windows.Controls.Panel.SetZIndex(pGrid, 0); }
                 if (SelectionOverlayCanvas.IsMouseCaptured)
                     SelectionOverlayCanvas.ReleaseMouseCapture();
 
@@ -1663,4 +1690,5 @@ namespace Caelum.Controls
         }
     }
 }
+
 
